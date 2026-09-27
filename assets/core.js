@@ -400,6 +400,22 @@ TE.run2D=(c,progress,checkpoint)=>{const s=TE.from2DConfig(c);
  return decorate(r);};
 })(globalThis.TE);
 
+(function(TE){
+TE.ptWire3omega=()=>{
+ const c=TE.default2D();Object.assign(c,{nx:80,ny:1,lx:5e-3,ly:1e-5,depth:5e-7,mode:'periodic',frequency:10,samples:256,maxPeriods:100});
+ c.materials=[{name:'Pt wire · representative properties',rho:21450,Cp:133,k:72,sigma:1e7,beta:.003,alpha:0,alphaSlope:0,color:'#c1c9d5'}];
+ c.materialMap=Array(c.nx*c.ny).fill(0);
+ c.electrical={kind:'current',value:{bias:0,amplitude:.014,phase:0},sourceSide:'left',sinkSide:'right',sourceRange:[0,1],sinkRange:[0,1]};
+ // Match substrate conductance k_s * L * w / d_s with the two modeled edges:
+ // 2 * h_edge * L * wire_thickness = k_s * L * w / d_s.
+ const hEdge=1/1e-5*c.ly/(2*c.depth);
+ c.thermal={left:{kind:'temperature',value:300,h:0},right:{kind:'temperature',value:300,h:0},bottom:{kind:'convection',value:300,h:hEdge},top:{kind:'convection',value:300,h:hEdge}};
+ c.sweep={enabled:false,min:1,max:1000,points:9,spacing:'log'};
+ c.description='Pt-wire 3ω example: L=5 mm, width=10 µm, assumed thickness=0.5 µm, σ300=1E7 S/m gives R300=100 Ω; resistance slope β=0.003/K; current=14 mA peak. End contacts: 300 K. Top/bottom h=1E6 W/(m² K) are equivalent cooling edges, matching a 1 W/(m K), 10 µm substrate with a 300 K backside (total conductance 0.005 W/K). This is a static substrate-cooling approximation: substrate heat capacity, diffusivity and lateral spreading are not modeled. Pt properties are representative; Seebeck is set to zero to isolate resistive 3ω. Outputs are peak phasors (RMS=peak/√2). Suggested Bode: terminal voltage, 3ω, electrical reference, raw amplitude. Preset assumptions are not recalibrated automatically after parameter edits.';
+ return c;
+};
+})(globalThis.TE);
+
 /* Presentation helpers: displayed rounding never replaces an unchanged raw value. */
 (function(TE){
  TE.formatInputNumber=value=>{

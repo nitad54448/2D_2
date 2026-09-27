@@ -143,3 +143,50 @@ limits may be wider than those ranges.
 Periodic exports contain the last complete cycle at each retained frequency,
 not the full startup history. CSV magnitudes remain in physical units when the
 screen uses dB. Exported results use the computed model, not subsequent input edits.
+
+## Pt wire · resistive 3ω example
+
+Select **Pt wire · resistive 3ω / equivalent substrate cooling** in the example
+menu. It starts as a single-frequency calculation at 10 Hz. Select multifrequency
+excitation to use the prepared 1–1000 Hz, nine-point logarithmic sweep.
+
+| Parameter | Value |
+|---|---|
+| Wire length | 5 mm |
+| Wire width | 10 µm |
+| Wire thickness (assumed) | 0.5 µm |
+| Conductivity at 300 K | 1E7 S/m |
+| Resistance at 300 K | 100 Ω |
+| Resistivity temperature coefficient β | 0.003 K⁻¹ |
+| Current | 0.014 A peak, zero DC bias |
+| Representative Pt density / heat capacity | 21450 kg/m³ / 133 J/(kg K) |
+| Representative Pt thermal conductivity | 72 W/(m K) |
+| Seebeck and its slope | Zero, isolating resistive 3ω |
+| Left and right contact temperatures | 300 K |
+| Top and bottom equivalent cooling coefficient | 1E6 W/(m² K), ambient 300 K |
+| Mesh / samples per cycle | 80 × 1 / 256 |
+
+The electrical cross-section is width × thickness. The selected thickness and
+conductivity give R = L/(σ × width × thickness) = 100 Ω.
+
+Substrate cooling is represented by equivalent boundary conductances, not an
+explicit substrate region. A substrate with k_s=1 W/(m K), thickness d_s=10 µm
+and a fixed 300 K backside has vertical conductance k_s L width / d_s = 0.005 W/K.
+The two in-plane edges have total area 2 L × wire thickness, so each receives
+h_edge = (k_s/d_s) × width/(2 × wire thickness) = 1E6 W/(m² K).
+These edge coefficients represent heat loss through the substrate, not air
+convection. This approximation assumes a nearly uniform temperature across the
+wire width and neglects substrate lateral spreading and thermal storage. The
+provided substrate diffusivity is therefore not used. Wire thermal storage is
+included. The example demonstrates nonlinear resistive 3ω within this solver;
+it is not an exact reproduction of a layered-substrate 3ω analytical solution.
+
+Choose terminal voltage, harmonic 3ω, electrical excitation reference and raw
+amplitude in Bode. These choices are preselected by the example. Displayed phasors
+are peak values; divide by √2 to compare with RMS values. For a source-to-sink
+voltage-drop convention, negate the exported complex terminal voltage before
+comparing signed in-phase/out-of-phase components. The positive resistance slope
+couples 2ω Joule heating into 3ω voltage automatically; no 3ω source is imposed.
+
+The example note records its initial assumptions. Changing wire geometry or
+substrate assumptions requires recalculating the equivalent h values manually.
