@@ -1,0 +1,16 @@
+✔ full report uses computed model, escapes text, and includes all periodic maps (47.027147ms)
+✔ steady report excludes fictitious harmonic and time plots (7.867808ms)
+✔ complete archive includes lossless model/results, histories, harmonics and coordinates (51.872218ms)
+✔ ZIP store supports UTF-8, binary and empty files with valid headers (15.397819ms)
+✔ offline document embeds all sources and five accessible tabs (4.681838ms)
+✔ embedded worker computes a real 2D partial-contact case (297.489702ms)
+✔ embedded worker rejects bad material properties (111.635717ms)
+✔ worker supplies progress and a complete provisional cycle before termination (175.340828ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 917.334521

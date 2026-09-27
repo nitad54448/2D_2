@@ -1,0 +1,209 @@
+{
+  "nodes": 117,
+  "cycles": 5,
+  "periodicError": 0.2685165655569374,
+  "voltage": [
+    {
+      "re": -6.163048423816797e-7,
+      "im": 0
+    },
+    {
+      "re": -0.0010903809861297852,
+      "im": 0.000022305367270461267
+    },
+    {
+      "re": -2.4679994512341103e-7,
+      "im": 2.9558108211945214e-7
+    },
+    {
+      "re": -6.015862723203263e-10,
+      "im": 1.602426694728615e-9
+    }
+  ],
+  "config": {
+    "version": 1,
+    "mode": "periodic",
+    "nx": 12,
+    "ny": 8,
+    "lx": 0.002,
+    "ly": 0.001,
+    "depth": 0.001,
+    "frequency": 2,
+    "samples": 128,
+    "maxPeriods": 100,
+    "materials": [
+      {
+        "name": "Copper",
+        "rho": 8960,
+        "Cp": 385,
+        "k": 400,
+        "sigma": 58000000,
+        "beta": 0.0039,
+        "alpha": 0.0000015,
+        "alphaSlope": 0,
+        "color": "#edaf6e"
+      },
+      {
+        "name": "BiTe",
+        "rho": 7700,
+        "Cp": 150,
+        "k": 1.5,
+        "sigma": 100000,
+        "beta": 0.002,
+        "alpha": 0.0002,
+        "alphaSlope": 2e-7,
+        "color": "#73d8d0"
+      }
+    ],
+    "materialMap": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "thermal": {
+      "left": {
+        "kind": "temperature",
+        "value": {
+          "bias": 300,
+          "amplitude": 0
+        },
+        "h": 10000
+      },
+      "right": {
+        "kind": "convection",
+        "value": {
+          "bias": 300,
+          "amplitude": 0
+        },
+        "h": 10000
+      },
+      "bottom": {
+        "kind": "flux",
+        "value": {
+          "bias": 0,
+          "amplitude": 0
+        },
+        "h": 1000
+      },
+      "top": {
+        "kind": "flux",
+        "value": {
+          "bias": 0,
+          "amplitude": 0
+        },
+        "h": 1000
+      }
+    },
+    "electrical": {
+      "kind": "current",
+      "value": {
+        "bias": 0,
+        "amplitude": 0.1,
+        "phase": 0
+      },
+      "sourceSide": "left",
+      "sinkSide": "right",
+      "sourceRange": [
+        0,
+        1
+      ],
+      "sinkRange": [
+        0,
+        1
+      ]
+    }
+  }
+}

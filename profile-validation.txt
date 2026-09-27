@@ -1,0 +1,20 @@
+✔ full report uses computed model, escapes text, and includes all periodic maps (46.085652ms)
+✔ steady report excludes fictitious harmonic and time plots (7.021372ms)
+✔ complete archive includes lossless model/results, histories, harmonics and coordinates (38.197071ms)
+✔ ZIP store supports UTF-8, binary and empty files with valid headers (9.993767ms)
+✔ DC spatial profile matches analytical 1D Seebeck temperature and voltage (29.256123ms)
+✔ time-selected nodal profiles select the requested sample and Y cut (3.327876ms)
+✔ cell profiles use cell centers and instantaneous vector magnitude (0.522312ms)
+✔ offline document loads local scripts and has five accessible tabs (2.758772ms)
+✔ embedded worker computes a real 2D partial-contact case (303.648906ms)
+✔ embedded worker rejects bad material properties (124.399001ms)
+✔ worker supplies progress and a complete provisional cycle before termination (184.348885ms)
+✔ separate scripts compile and initialize TE in HTML load order (16.707199ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 972.775446

@@ -1,0 +1,17 @@
+✔ full report uses computed model, escapes text, and includes all periodic maps (64.325421ms)
+✔ steady report excludes fictitious harmonic and time plots (7.831706ms)
+✔ complete archive includes lossless model/results, histories, harmonics and coordinates (36.484182ms)
+✔ ZIP store supports UTF-8, binary and empty files with valid headers (10.945603ms)
+✔ offline document loads local scripts and has five accessible tabs (3.596044ms)
+✔ embedded worker computes a real 2D partial-contact case (277.620801ms)
+✔ embedded worker rejects bad material properties (113.853996ms)
+✔ worker supplies progress and a complete provisional cycle before termination (167.071723ms)
+✔ separate scripts compile and initialize TE in HTML load order (17.062261ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 944.886787

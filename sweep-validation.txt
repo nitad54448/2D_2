@@ -1,0 +1,23 @@
+✔ sweep report and full archive include every point, Bode settings and equations (101.348832ms)
+✔ stop retains completed frequencies and a provisional checkpoint; completed sweeps avoid duplicates (50.790714ms)
+✔ built UI contains all referenced static IDs and no unresolved injection markers (0.747793ms)
+✔ frequency grids include endpoints and reject invalid or oversized sweeps (3.313681ms)
+✔ impedance sign convention yields positive resistance and zero phase (0.693501ms)
+✔ higher harmonic phase subtracts n times reference; amplitude normalization is independent (0.275638ms)
+✔ zero/inactive references and unconverged points cannot produce misleading Bode values (0.247275ms)
+✔ phase unwrapping resets over undefined points, probe sampling and CSV retain nulls (0.964421ms)
+✔ actual sweep preserves Ohmic resistance at every frequency and reports failure without losing prior points (54.195914ms)
+✔ offline document loads local scripts and has five accessible tabs (1.644241ms)
+✔ embedded worker computes a real 2D partial-contact case (115.441533ms)
+✔ embedded worker rejects bad material properties (51.041449ms)
+✔ worker supplies progress and a complete provisional cycle before termination (87.845217ms)
+✔ separate scripts compile and initialize TE in HTML load order (8.001459ms)
+✔ sweep worker emits both converged points and supports termination at the next point (162.249674ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 561.136818

@@ -1,0 +1,28 @@
+✔ all example defaults are valid (2.28177ms)
+✔ lx rejects zero, negative, missing, null and non-finite values (1.291842ms)
+✔ ly rejects zero, negative, missing, null and non-finite values (1.398862ms)
+✔ depth rejects zero, negative, missing, null and non-finite values (0.532771ms)
+✔ rho requires a strictly positive finite material value (0.568053ms)
+✔ Cp requires a strictly positive finite material value (0.582685ms)
+✔ k requires a strictly positive finite material value (0.462665ms)
+✔ sigma requires a strictly positive finite material value (0.933543ms)
+✔ geometry underflow/overflow is rejected (0.291218ms)
+✔ temperature waveforms must be positive for the complete cycle (0.990549ms)
+✔ valid signed currents, voltages, fluxes and thermoelectric coefficients remain allowed (0.245619ms)
+✔ negative convection and non-finite signals fail (1.039392ms)
+✔ mesh counts and map are validated independently (0.634384ms)
+✔ frequency, time samples and cycle budget are validated (0.9781ms)
+✔ electrode coverage, sides and overlap are rejected early (0.779191ms)
+✔ all-time corner consistency, not just t=0, is enforced (0.311078ms)
+✔ laws that become invalid at prescribed temperatures and overflowing capacity are rejected (0.349015ms)
+✔ runtime checks reject an evolving invalid law and non-finite power (7.407614ms)
+✔ direct solver API rejects invalid numerical settings (1.525142ms)
+✔ malformed imported objects produce validation errors rather than silent coercion (0.451469ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 98.093278

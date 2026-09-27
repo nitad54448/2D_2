@@ -1,0 +1,21 @@
+✔ DC controls clear saved raw AC values and disable electrical and thermal AC inputs (7.66805ms)
+✔ full report uses computed model, escapes text, and includes all periodic maps (79.78213ms)
+✔ steady report excludes fictitious harmonic and time plots (11.097847ms)
+✔ complete archive includes lossless model/results, histories, harmonics and coordinates (53.15266ms)
+✔ ZIP store supports UTF-8, binary and empty files with valid headers (15.412236ms)
+✔ DC spatial profile matches analytical 1D Seebeck temperature and voltage (33.03959ms)
+✔ time-selected nodal profiles select the requested sample and Y cut (1.89821ms)
+✔ cell profiles use cell centers and instantaneous vector magnitude (0.422445ms)
+✔ offline document loads local scripts and has five accessible tabs (3.98719ms)
+✔ embedded worker computes a real 2D partial-contact case (388.332384ms)
+✔ embedded worker rejects bad material properties (108.717157ms)
+✔ worker supplies progress and a complete provisional cycle before termination (171.107725ms)
+✔ separate scripts compile and initialize TE in HTML load order (19.175557ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1152.268529
