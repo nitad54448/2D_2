@@ -1,1 +1,0 @@
-self.onmessage=event=>{try{if(event.data.sweep?.enabled){TE.runSweep(event.data,m=>self.postMessage(m));return;}const result=TE.run2D(event.data,p=>self.postMessage({type:'progress',progress:p}),r=>self.postMessage({type:'checkpoint',result:r}));self.postMessage({type:'result',result});}catch(e){self.postMessage({type:'error',message:e.message});}};

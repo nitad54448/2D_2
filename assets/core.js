@@ -44,6 +44,28 @@
   Object.assign(TE, {ThermoelectricMaterial, MaterialCollection});
 })(globalThis.TE = globalThis.TE || {});
 
+/* Conservative application operating envelope, not material certification. */
+(function(TE){
+ TE.resultLimits=Object.freeze({temperature:2000,voltage:1e6,current:1e6,Jx:1e12,Jy:1e12,qx:1e12,qy:1e12,power:1e12});
+ TE.checkRange=(value,key)=>{
+  const limit=TE.resultLimits[key];
+  TE.assert(Number.isFinite(value)&&Math.abs(value)<=limit&&(key!=='temperature'||value>=1),`Result rejected: ${key} is outside the application operating range (${key==='temperature'?'1–2000 K':'absolute limit '+limit+' SI units'}). Check units, dimensions, excitation and material properties. No clipped result is used.`);
+  return value;
+ };
+ TE.checkResult=r=>{
+  const periodic=r.method!=='steady';
+  for(const key of ['temperature','voltage','current','terminalVoltage','Jx','Jy','qx','qy']){
+   const kind=key==='terminalVoltage'?'voltage':key,value=r[key];
+   const scan=v=>{if(Array.isArray(v))v.forEach(scan);else TE.checkRange(v,kind);};scan(value);
+  }
+  if(periodic)for(const [key,orders] of Object.entries(r.harmonics)){
+   const kind=key==='terminalVoltage'?'voltage':key;
+   const scan=z=>{if(Array.isArray(z))z.forEach(scan);else{TE.assert(Number.isFinite(z.re)&&Number.isFinite(z.im),'Result rejected: nonfinite harmonic.');TE.assert(Math.hypot(z.re,z.im)<=TE.resultLimits[kind]*2,'Result rejected: harmonic exceeds the application operating range.');}};scan(orders);
+  }
+  return r;
+ };
+})(globalThis.TE);
+
 (function (TE) {
   // Peak phasors: u(t)=U0+Re(sum(Un*exp(i*n*omega*t))).
   TE.extractHarmonics = (history, count=3) => {
@@ -141,6 +163,7 @@ class Solver2D {
   for(const side of ['left','right','bottom','top']){const b=boundaries[side];TE.assert(b&&['temperature','flux','convection'].includes(b.kind),'Define all four thermal boundaries.');TE.assert(Number.isFinite(b.h??0)&&(b.h??0)>=0,'Convection coefficient must be nonnegative.');}
  }
  properties(T){
+  T.forEach(v=>TE.checkRange(v,'temperature'));
   const m=this.mesh,cap=Array(m.n).fill(0);
   m.cells.forEach(c=>c.nodes.forEach(i=>{const a=this.materials[c.m];cap[i]+=a.density(T[i])*a.heatCapacity(T[i])*c.volume/4;}));
   const p=m.links.map(e=>{const a=this.materials[e.m],Ta=T[e.a],Tb=T[e.b],rho=(a.electricalResistivity(Ta)+a.electricalResistivity(Tb))/2;
@@ -173,11 +196,13 @@ class Solver2D {
    terminalVoltage=(target-Ibase)/Iunit;V=base.map((v,i)=>v+terminalVoltage*unit[i]);
   }
   TE.assert(V.every(Number.isFinite),'Voltage exceeds the finite numerical range. Check excitation and material values.');
-  const I=current(V),terminalCurrent=terminal(I);TE.assert(I.every(Number.isFinite)&&Number.isFinite(terminalCurrent)&&Number.isFinite(terminalVoltage),'Current or terminal voltage exceeds the finite numerical range.');return {V,I,terminalVoltage,current:terminalCurrent};
+  V.forEach(v=>TE.checkRange(v,'voltage'));
+  const I=current(V),terminalCurrent=terminal(I);TE.checkRange(terminalCurrent,'current');TE.assert(I.every(Number.isFinite)&&Number.isFinite(terminalCurrent)&&Number.isFinite(terminalVoltage),'Current or terminal voltage exceeds the finite numerical range.');return {V,I,terminalVoltage,current:terminalCurrent};
  }
  balance(T,t){
   const m=this.mesh,{p,cap}=this.properties(T),elect=this.electric(T,p,t),source=Array(m.n).fill(0),q=[],work=[];
   m.links.forEach((l,k)=>{const I=elect.I[k],P=I*(elect.V[l.a]-elect.V[l.b]),pel=p[k].alpha*(T[l.a]+T[l.b])/2*I;
+   TE.checkRange(P,'power');TE.checkRange(pel,'power');
    TE.assert([I,P,pel].every(Number.isFinite),'Electrical/thermal power exceeds the finite numerical range.');
    source[l.a]+=-pel+P/2;source[l.b]+=pel+P/2;q.push(pel-p[k].k*(T[l.b]-T[l.a]));work.push(P);
   });TE.assert([...source,...q,...work].every(Number.isFinite),'Heat balance exceeds the finite numerical range.');return {p,cap,...elect,source,q,work};
@@ -197,6 +222,7 @@ class Solver2D {
    const candidate=TE.graphSolve(m,b.p.map(p=>p.k),diag,rhs,bc.fixed,{initial:T});
    error=Math.max(...candidate.map((v,i)=>Math.abs(v-T[i])));
    TE.assert(candidate.every(v=>Number.isFinite(v)&&v>0),'Nonphysical temperature. Check excitation and material laws.');
+   candidate.forEach(v=>TE.checkRange(v,'temperature'));
    if(error<=tolerance)return candidate;
    T=candidate.map((v,i)=>bc.fixed.has(i)?v:T[i]+relaxation*(v-T[i]));
   }
@@ -205,11 +231,12 @@ class Solver2D {
  snapshot(T,t=0,steady=false){
   const m=this.mesh,b=this.balance(T,t),Jx=[],Jy=[],qx=[],qy=[];
   m.cells.forEach(c=>{const [a,bb,cc,d]=c.links;Jx.push((b.I[a]+b.I[bb])/(m.dy*m.depth));Jy.push((b.I[cc]+b.I[d])/(m.dx*m.depth));qx.push((b.q[a]+b.q[bb])/(m.dy*m.depth));qy.push((b.q[cc]+b.q[d])/(m.dx*m.depth));});
+  for(const [key,values] of Object.entries({Jx,Jy,qx,qy}))values.forEach(v=>TE.checkRange(v,key));
   const bc=this.thermal(t),res=b.source.map((v,i)=>v+bc.rhs[i]-bc.diag[i]*T[i]);
   m.links.forEach((e,k)=>{const v=b.p[k].k*(T[e.a]-T[e.b]);res[e.a]-=v;res[e.b]+=v;});
   let heatOut=0;for(const [side,faces] of Object.entries(m.sides)){const c=this.boundaries[side],v=TE.signal2D(c.value,t,this.frequency);if(c.kind!=='temperature')for(const {node,A} of faces)heatOut+=A*(c.kind==='flux'?v:(c.h??0)*(T[node]-v));}
   for(const [i] of bc.fixed)heatOut+=res[i];
-  const electricalPower=-b.current*b.terminalVoltage;
+  const electricalPower=-b.current*b.terminalVoltage;TE.checkRange(electricalPower,'power');
   TE.assert([...Jx,...Jy,...qx,...qy,electricalPower,heatOut,...res].every(Number.isFinite),'Derived current density, heat flux or power exceeds the finite numerical range.');
   return {temperature:[...T],voltage:b.V,Jx,Jy,qx,qy,current:b.current,terminalVoltage:b.terminalVoltage,electricalPower,
    energyResidual:steady?heatOut-electricalPower:null,freeResidualWatts:Math.max(0,...res.filter((_,i)=>!bc.fixed.has(i)).map(Math.abs))};
@@ -368,7 +395,7 @@ TE.from2DConfig=c=>{
  return new TE.Solver2D(mesh,materials,thermal,electric);
 };
 TE.run2D=(c,progress,checkpoint)=>{const s=TE.from2DConfig(c);
- const decorate=r=>({...r,config:c,mesh:{nx:c.nx,ny:c.ny,lx:c.lx,ly:c.ly,depth:c.depth,x:s.mesh.x,y:s.mesh.y,materialMap:s.mesh.map},convention:'Peak phasors: u(t)=U0+Re(sum(Un exp(i n omega t))). Terminal voltage = V(sink)-V(source).'});
+ const decorate=r=>({...TE.checkResult(r),config:c,mesh:{nx:c.nx,ny:c.ny,lx:c.lx,ly:c.ly,depth:c.depth,x:s.mesh.x,y:s.mesh.y,materialMap:s.mesh.map},convention:'Peak phasors: u(t)=U0+Re(sum(Un exp(i n omega t))). Terminal voltage = V(sink)-V(source).'});
  const r=c.mode==='steady'?s.solveSteady():s.solvePeriodic(c.frequency,{samples:c.samples,maxPeriods:c.maxPeriods,onProgress:progress,onCheckpoint:checkpoint?r=>checkpoint(decorate(r)):undefined});
  return decorate(r);};
 })(globalThis.TE);
@@ -498,13 +525,14 @@ TE.bodeRows=(results,o={})=>{
   else if(reference!=='time'){const b=c.thermal[reference];ref=signal(b.value);refUnit=b.kind==='flux'?'W/m²':'K';if(b.kind==='convection'&&b.h===0)reason='Convection reference is inactive (h = 0).';}
   const a=mag(z),refMag=mag(ref),refSeries=quantity==='impedance'||reference==='current'?r.harmonics.current:reference==='terminalVoltage'?r.harmonics.terminalVoltage:null;
   // Relative noise gate for measured terminal references; imposed references are exact inputs.
-  const refFloor=refSeries?Math.max(...refSeries.map(mag))*1e-10:0;
+  const refFloor=reference==='time'&&quantity!=='impedance'?0:Math.max(refUnit==='K'||refUnit==='W/m²'?1e-9:1e-12,refSeries?Math.max(...refSeries.map(mag))*1e-10:0);
   if(!Number.isFinite(refMag)||refMag<=refFloor)reason=reason||'Reference amplitude is zero or below numerical resolution.';
   const exponent=normalization==='power'?n:1,divisor=quantity==='impedance'?refMag:normalization==='raw'?1:refMag**exponent;
   let magnitude=(reason&&(quantity==='impedance'||normalization!=='raw'))?null:a/divisor;
   if(magnitude!==null&&!Number.isFinite(magnitude)){magnitude=null;reason=reason||'Normalization exceeds the finite numerical range.';}
   if(quantity!=='impedance'&&normalization!=='raw')unit+='/('+refUnit+(exponent===1?'':'^'+exponent)+')';
   let phase=!reason&&a>phaseFloor?wrap(angle(z)+(quantity==='impedance'?180:0)-n*angle(ref)):null;
+  if(magnitude!==null&&magnitude>1e15){magnitude=null;phase=null;reason='Normalized magnitude exceeds the display limit (1E15). Check reference amplitude and units.';}
   if(!r.converged){magnitude=null;phase=null;reason='Unconverged point: excluded from Bode.';}
   if(phase!==null&&unwrap&&previous!==null)phase+=360*Math.round((previous-phase)/360);
   previous=phase;
