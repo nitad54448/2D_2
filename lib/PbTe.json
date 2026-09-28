@@ -1,0 +1,32 @@
+{
+  "format": "TE_2D_material",
+  "version": 1,
+  "referenceTemperature": 300,
+  "units": {
+    "rho": "kg/m^3",
+    "Cp": "J/(kg K)",
+    "k": "W/(m K)",
+    "sigma": "S/m",
+    "alpha": "V/K",
+    "beta": "1/K",
+    "alphaSlope": "V/K^2"
+  },
+  "material": {
+    "name": "PbTe (room-temperature model)",
+    "rho": 8160,
+    "Cp": 151,
+    "k": 1.46,
+    "sigma": 61000.0,
+    "alpha": 0.000187,
+    "beta": 0,
+    "alphaSlope": 0,
+    "color": "#db8bad"
+  },
+  "notes": "Representative positive-Seebeck PbTe model from Bethke et al., Table 1 (mostly 293 K), held constant at nominal 300 K. beta=0 and alphaSlope=0 are assumptions. Doping, processing and temperature alter actual PbTe properties; this is not a high-temperature material fit.",
+  "sources": [
+    {
+      "url": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0151708",
+      "properties": "Table 1: rho, Cp, k, sigma and Seebeck. Model at nominal 300 K approximates the tabulated near-room-temperature values."
+    }
+  ]
+}

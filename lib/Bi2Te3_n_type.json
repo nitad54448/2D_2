@@ -1,0 +1,32 @@
+{
+  "format": "TE_2D_material",
+  "version": 1,
+  "referenceTemperature": 300,
+  "units": {
+    "rho": "kg/m^3",
+    "Cp": "J/(kg K)",
+    "k": "W/(m K)",
+    "sigma": "S/m",
+    "alpha": "V/K",
+    "beta": "1/K",
+    "alphaSlope": "V/K^2"
+  },
+  "material": {
+    "name": "Bi2Te3 n-type (illustrative)",
+    "rho": 7740,
+    "Cp": 154.4,
+    "k": 1.6,
+    "sigma": 110000.0,
+    "alpha": -0.0002,
+    "beta": 0,
+    "alphaSlope": 0,
+    "color": "#ae92d9"
+  },
+  "notes": "Illustrative n-type partner: same scalar properties as the p-type benchmark with ONLY the Seebeck sign reversed. This is a constructed demonstration preset, not measured n-type material data. Both slopes are zero.",
+  "sources": [
+    {
+      "url": "https://doc.comsol.com/6.3/doc/com.comsol.help.models.heat.thermoelectric_leg/thermoelectric_leg.html",
+      "properties": "Positive-Seebeck benchmark is the starting point; the negative Seebeck sign is an explicit modeling assumption."
+    }
+  ]
+}

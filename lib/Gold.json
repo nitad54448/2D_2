@@ -1,0 +1,36 @@
+{
+  "format": "TE_2D_material",
+  "version": 1,
+  "referenceTemperature": 300,
+  "units": {
+    "rho": "kg/m^3",
+    "Cp": "J/(kg K)",
+    "k": "W/(m K)",
+    "sigma": "S/m",
+    "alpha": "V/K",
+    "beta": "1/K",
+    "alphaSlope": "V/K^2"
+  },
+  "material": {
+    "name": "Gold",
+    "rho": 19300,
+    "Cp": 129,
+    "k": 318,
+    "sigma": 44242306.262940876,
+    "alpha": 1.94e-06,
+    "beta": 0.003893322951138797,
+    "alphaSlope": 0,
+    "color": "#e0b64d"
+  },
+  "notes": "Approximate bulk room-temperature preset. Supplier resistivity at 293.15 K and tabulated temperature coefficient are treated as a local linear law and rebased to 300 K. Density, Cp and k are held constant. Seebeck is a representative constant from the cited thermopile table; alphaSlope=0 is an assumption. Not a wide-temperature or thin-film fit.",
+  "sources": [
+    {
+      "url": "https://www.goodfellow.com/global/gold-pellets-group",
+      "properties": "rho, Cp, k, resistivity and temperature coefficient; reference temperatures differ as documented above."
+    },
+    {
+      "url": "https://patents.google.com/patent/US8696989B2/en",
+      "properties": "Table 1: representative Seebeck coefficient."
+    }
+  ]
+}

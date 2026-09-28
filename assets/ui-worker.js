@@ -60,7 +60,7 @@
   };
   app.lock = function lock(value) {
     document.querySelectorAll('.settings').forEach(e => e.disabled = value);
-    for (const id of ['preset', 'import', 'importProject', 'addMaterial', 'run', 'save']) app.$(id).disabled = value;
+    for (const id of ['preset', 'import', 'importProject', 'addMaterial', 'materialFilesButton', 'run', 'save']) app.$(id).disabled = value;
     app.$('cancel').hidden = !value;
     if (!value) {
       app.modes();

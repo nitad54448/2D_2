@@ -70,6 +70,8 @@
   app.$('applyGrid').onclick = app.applyMesh;
   app.$('fill').onclick = app.fillMaterial;
   app.$('addMaterial').onclick = app.addMaterial;
+  app.$('materialFilesButton').onclick = () => app.$('materialFiles').click();
+  app.$('materialFiles').onchange = app.importMaterialJson;
   app.$('resultCanvas').onclick = e => {
     if (!app.result || !app.resultFrame) return;
     const r = app.$('resultCanvas').getBoundingClientRect(),

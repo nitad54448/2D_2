@@ -350,6 +350,52 @@
       app.notice(e.message, true);
     }
   };
+  // Material files use SI units, including alpha in V/K and alphaSlope in V/K².
+  app.parseMaterialJson = function parseMaterialJson(text) {
+    const data = JSON.parse(text);
+    TE.assert(data && typeof data === 'object' && !Array.isArray(data), 'Expected a material JSON object.');
+    if (data.material !== undefined) {
+      TE.assert(data.referenceTemperature === undefined || data.referenceTemperature === 300,
+        'Material properties must be referenced to 300 K.');
+    }
+    const source = data.material ?? data;
+    TE.assert(source && typeof source === 'object' && !Array.isArray(source), 'Expected a material object.');
+    TE.assert(typeof source.name === 'string' && source.name.trim().length > 0 && source.name.length <= 200,
+      'Material name must contain 1–200 characters.');
+    const material = {name: source.name.trim()};
+    for (const key of ['rho', 'Cp', 'k', 'sigma', 'alpha', 'beta', 'alphaSlope']) {
+      const value = source[key] === undefined && ['beta', 'alphaSlope'].includes(key) ? 0 : source[key];
+      TE.assert(typeof value === 'number' && Number.isFinite(value), `Material ${key} must be a finite number in SI units.`);
+      if (['rho', 'Cp', 'k', 'sigma'].includes(key)) TE.assert(value > 0, `Material ${key} must be positive.`);
+      material[key] = value;
+    }
+    TE.assert(source.color === undefined || /^#[0-9a-f]{6}$/i.test(source.color), 'Material color must use #RRGGBB.');
+    material.color = source.color ?? '#73d8d0';
+    return material;
+  };
+  app.importMaterialJson = async () => {
+    const input = app.$('materialFiles');
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      TE.assert(!app.worker && !app.importingProject, 'Wait until the current operation finishes.');
+      TE.assert(file.size <= 65536, 'Material JSON must be at most 64 KB.');
+      const material = app.parseMaterialJson(await file.text());
+      TE.assert(!app.worker && !app.importingProject, 'Wait until the current operation finishes, then add the material again.');
+      const config = app.read();
+      TE.assert(config.materials.length < 12, 'Maximum 12 materials.');
+      config.materials.push(material);
+      app.config = config;
+      app.materialsForm();
+      app.drawGeometry();
+      app.dirty();
+      app.validateUI();
+    } catch (error) {
+      app.notice(error.message, true);
+    } finally {
+      input.value = '';
+    }
+  };
   app.importModel = async () => {
     const f = app.$('file').files[0];
     if (!f) return;

@@ -1,0 +1,23 @@
+
+
+The material cards are fully editable, as in version 13. Add material json
+appends one prefilled card; + Add material still adds a manually editable card.
+No material catalog, presets, folder loading or /lib requests are used.
+
+JSON properties use SI units at 300 K. Example:
+{
+  "name": "My material",
+  "rho": 2000,
+  "Cp": 500,
+  "k": 2,
+  "sigma": 100000,
+  "alpha": 0.0002,
+  "beta": 0,
+  "alphaSlope": 0,
+  "color": "#73d8d0"
+}
+
+alpha is in V/K and alphaSlope in V/K²; the cards display µV/K and µV/K².
+beta, alphaSlope and color are optional. A material object inside a
+"material" property is also accepted. Files are limited to 64 KB and the
+editor supports at most 12 materials.
