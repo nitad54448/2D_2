@@ -33,5 +33,8 @@ globalThis.TEApp = {};
     return TE.readNumberInput(e);
   };
   app.exporting = false;
+  app.inputsChanged = false;
+  app.geometryFrame = 0;
+  app.presetToken = 0;
   app.timer = undefined;
 })(globalThis.TEApp);

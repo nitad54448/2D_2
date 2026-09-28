@@ -29,7 +29,7 @@
     for (const [id, value] of Object.entries({bodeQuantity: o.quantity, bodeHarmonic: o.harmonic,
       bodeReference: o.reference, bodeNormalization: o.normalization, bodeFloor: o.phaseFloor,
       bodeUnwrap: o.unwrap ? 'unwrapped' : 'wrapped', bodeX: 100 * o.x, bodeY: 100 * o.y,
-      bodeScale: o.scale, bodeDb: o.dbReference})) {
+      bodeScale: o.scale, bodeDb: o.dbReference, bodeRepresentation: o.representation ?? 'polar'})) {
       const e = app.$(id);
       if (e.type === 'number') TE.setNumberInput(e, value); else e.value = String(value);
     }

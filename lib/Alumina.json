@@ -1,0 +1,32 @@
+{
+  "format": "TE_2D_material",
+  "version": 1,
+  "referenceTemperature": 300,
+  "units": {
+    "rho": "kg/m^3",
+    "Cp": "J/(kg K)",
+    "k": "W/(m K)",
+    "sigma": "S/m",
+    "alpha": "V/K",
+    "beta": "1/K",
+    "alphaSlope": "V/K^2"
+  },
+  "material": {
+    "name": "Alumina (96% Al2O3)",
+    "rho": 3750,
+    "Cp": 750,
+    "k": 24,
+    "sigma": 1e-12,
+    "alpha": 0,
+    "beta": 0,
+    "alphaSlope": 0,
+    "color": "#d9d4c7"
+  },
+  "notes": "96% alumina substrate, the usual plate material of thermoelectric modules. Datasheet values at 25 °C are used at nominal 300 K; density, Cp and k are held constant (the same datasheet gives k halving to 12 W/(m K) at 300 °C). The datasheet specifies volume resistivity > 1e14 ohm cm at 25 °C, so sigma = 1e-12 S/m is an upper bound; any value this small behaves as an ideal electrical insulator in this app. alpha = 0 (no current flows in the insulator), beta = 0 and alphaSlope = 0 are modeling assumptions.",
+  "sources": [
+    {
+      "url": "https://www.maruwa-g.com/e/products/ceramic/upfiles/alumina_01_en_1.pdf",
+      "properties": "Grade HA-96-2 (96% Al2O3): bulk density 3.75 g/cm^3, thermal conductivity and specific heat at 25 °C, volume resistivity at 25 °C."
+    }
+  ]
+}

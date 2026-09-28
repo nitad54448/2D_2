@@ -124,10 +124,8 @@
   app.modes = function modes() {
     const dc = app.$('excitationMode').value === 'steady',
       open = app.$('electricalKind').value === 'open_circuit';
-    if (dc) {
-      TE.setNumberInput(app.$('amplitude'), 0);
-      TE.setNumberInput(app.$('phase'), 0);
-    }
+    // DC disables the AC fields without erasing them, so switching back to AC restores them.
+    // Disabled fields are read as 0 (readBoundaryNumber), so DC still solves without electrical AC.
     app.$('bias').disabled = open;
     app.$('amplitude').disabled = dc || open;
     app.$('phase').disabled = dc || open || Number(app.$('amplitude').value) === 0;
@@ -156,7 +154,7 @@
       electrical: {
         kind: app.$('electricalKind').value,
         value: {
-          amplitude: Number(app.$('amplitude').value)
+          amplitude: dc ? 0 : Number(app.$('amplitude').value)
         }
       },
       thermal
@@ -181,10 +179,16 @@
       f = app.geomFrame;
     if (x < f.left || x >= f.left + f.w || y < f.top || y >= f.top + f.h) return;
     const i = Math.floor((x - f.left) / f.w * app.config.nx),
-      j = app.config.ny - 1 - Math.floor((y - f.top) / f.h * app.config.ny);
-    app.config.materialMap[j * app.config.nx + i] = app.selected;
-    app.drawGeometry();
+      j = app.config.ny - 1 - Math.floor((y - f.top) / f.h * app.config.ny),
+      k = j * app.config.nx + i;
+    if (app.config.materialMap[k] === app.selected) return;
+    app.config.materialMap[k] = app.selected;
     app.dirty();
+    // Coalesce redraws while dragging: at most one full canvas redraw per frame.
+    if (!app.geometryFrame) app.geometryFrame = requestAnimationFrame(() => {
+      app.geometryFrame = 0;
+      app.drawGeometry();
+    });
   };
   app.validationTargets = function validationTargets(path) {
     const direct = {
@@ -449,10 +453,105 @@
       app.$('file').value = '';
     }
   };
-  app.loadPreset = () => {
+  // Thermoelectric module example: one n/p Bi2Te3 couple between alumina plates, cut through the
+  // middle of the legs. Cells are 0.2 mm (x) × 0.1 mm (y): legs 1.4 × 1.6 mm, copper 0.3 mm,
+  // alumina 0.6 mm, air gap 1 mm. Material indices: 0 p, 1 n, 2 copper, 3 alumina, 4 air.
+  app.moduleLayout = function moduleLayout() {
+    const lead = 3, leg = 7, gap = 5, ceramic = 6, copper = 3, height = 16,
+      nx = 2 * lead + 2 * leg + gap,
+      ny = 2 * ceramic + 2 * copper + height,
+      P = 0, N = 1, CU = 2, CERAMIC = 3, AIR = 4,
+      map = Array(nx * ny).fill(AIR),
+      fill = (i0, i1, j0, j1, m) => {
+        for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) map[j * nx + i] = m;
+      };
+    const nStart = lead, pStart = lead + leg + gap, strap = ceramic, legBottom = ceramic + copper, legTop = legBottom + height;
+    fill(0, nx, 0, ceramic, CERAMIC);
+    fill(0, nx, ny - ceramic, ny, CERAMIC);
+    fill(0, nStart + leg, strap, legBottom, CU); // left lead under the n leg
+    fill(pStart, nx, strap, legBottom, CU); // right lead under the p leg
+    fill(nStart, pStart + leg, legTop, legTop + copper, CU); // top strap joining the legs
+    fill(nStart, nStart + leg, legBottom, legTop, N);
+    fill(pStart, pStart + leg, legBottom, legTop, P);
+    return {nx, ny, lx: 5e-3, ly: 3.4e-3, map, contact: [strap / ny, legBottom / ny]};
+  };
+  // All five materials come from the material library (the files behind "Select preset…"). The
+  // built-in copies mirror those files and are used only for a file that is missing, invalid, or
+  // unsuitable for its role (legs need the right Seebeck sign; plates and gaps must insulate).
+  app.moduleMaterials = async function moduleMaterials() {
+    const insulating = m => m.sigma < 1e-6,
+      entries = [
+        ['Bi2Te3.json', m => m.alpha > 0, {name: 'Bi2Te3 (p-type benchmark)', rho: 7740, Cp: 154.4, k: 1.6, sigma: 1.1e5, beta: 0, alpha: 2e-4, alphaSlope: 0, color: '#73d8d0'}],
+        ['Bi2Te3_n_type.json', m => m.alpha < 0, {name: 'Bi2Te3 n-type (illustrative)', rho: 7740, Cp: 154.4, k: 1.6, sigma: 1.1e5, beta: 0, alpha: -2e-4, alphaSlope: 0, color: '#ae92d9'}],
+        ['Copper.json', m => m.sigma > 1e6, {name: 'Copper', rho: 8960, Cp: 385, k: 401, sigma: 57478566.4581124, beta: 0.004176967424511028, alpha: 1.83e-6, alphaSlope: 0, color: '#edaf6e'}],
+        ['Alumina.json', insulating, {name: 'Alumina (96% Al2O3)', rho: 3750, Cp: 750, k: 24, sigma: 1e-12, beta: 0, alpha: 0, alphaSlope: 0, color: '#d9d4c7'}],
+        ['Air.json', insulating, {name: 'Air (1 atm, still)', rho: 1.1614, Cp: 1007, k: .0263, sigma: 1e-14, beta: 0, alpha: 0, alphaSlope: 0, color: '#46535f'}]
+      ];
+    const loaded = await Promise.all(entries.map(async ([file, ok, fallback]) => {
+      try {
+        const res = await fetch('lib/' + file);
+        if (!res.ok) throw new Error();
+        const material = app.parseMaterialJson(await res.text());
+        if (!ok(material)) throw new Error();
+        return {material, file};
+      } catch {
+        return {material: {...fallback}, file: null};
+      }
+    }));
+    const materials = loaded.map(v => v.material), [p, n] = materials;
+    if (p.color.toLowerCase() === n.color.toLowerCase()) n.color = p.color.toLowerCase() === '#ae92d9' ? '#73d8d0' : '#ae92d9';
+    const library = loaded.filter(v => v.file).map(v => 'lib/' + v.file),
+      builtIn = loaded.filter(v => !v.file).map(v => v.material.name);
+    return {
+      materials,
+      source: (library.length ? 'from ' + library.join(', ') : '') + (library.length && builtIn.length ? '; ' : '') + (builtIn.length ? 'built-in copies for ' + builtIn.join(', ') : '')
+    };
+  };
+  app.moduleConfig = async function moduleConfig() {
+    const {materials, source} = await app.moduleMaterials(),
+      {nx, ny, lx, ly, map, contact} = app.moduleLayout(),
+      flux = () => ({kind: 'flux', value: {bias: 0, amplitude: 0, phase: 0}, h: 0});
+    return {
+      ...TE.default2D(),
+      description: 'Thermoelectric module: one Bi2Te3 n/p couple between alumina plates, cut through the middle of the legs (2D, depth 1.4 mm). ' +
+        'Current enters the left copper lead, rises through the n leg, crosses the top strap and returns down the p leg to the right lead: the legs are electrically in series and thermally in parallel. ' +
+        'Default: Peltier cooler at 4 A DC. The bottom plate sits on a 300 K heat sink and the top plate is insulated, so the top cools to its no-load limit. ' +
+        'Try: current arrows on the Results map; more current (cooling improves up to an optimum, then Joule heating wins); a heat load as a negative top flux (positive = outward); a negative current to reverse the heat flow; ' +
+        'a generator with bottom 350 K, top temperature 300 K and open circuit (Seebeck voltage). A real module repeats this couple (e.g. 127 times): voltage and heat pumping scale with the number of couples. ' +
+        'Idealized: no contact resistance, no radiation or convection in the air gap, insulated side edges. Material properties ' + source + '.',
+      mode: 'steady',
+      nx,
+      ny,
+      lx,
+      ly,
+      depth: 1.4e-3,
+      frequency: .5,
+      materials,
+      materialMap: map,
+      thermal: {left: flux(), right: flux(), top: flux(), bottom: {kind: 'temperature', value: {bias: 300, amplitude: 0, phase: 0}, h: 0}},
+      electrical: {kind: 'current', value: {bias: 4, amplitude: 0, phase: 0}, sourceSide: 'left', sinkSide: 'right', sourceRange: [...contact], sinkRange: [...contact]}
+    };
+  };
+  app.loadPreset = async () => {
+    const token = ++app.presetToken,
+      p = app.$('preset').value;
+    if (p === 'module') {
+      try {
+        const config = await app.moduleConfig();
+        // Ignore a slow library load if another preset, a run or an import started meanwhile.
+        if (token !== app.presetToken || app.worker || app.importingProject) return;
+        TE.assertValid2DConfig(config);
+        app.config = config;
+        app.selected = 0;
+        app.fill();
+        app.dirty();
+      } catch (e) {
+        app.notice('Could not load the thermoelectric module: ' + e.message, true);
+      }
+      return;
+    }
     app.config = TE.default2D();
     app.selected = 0;
-    const p = app.$('preset').value;
     if (p === 'spreading') {
       app.config.mode = 'steady';
       app.config.electrical.value = {

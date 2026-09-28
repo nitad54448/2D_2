@@ -317,10 +317,20 @@
           free.push(i);
         }
         const endpoints = mesh.links.map(e => [idx[e.a], idx[e.b]]);
+        // Flat typed arrays of links joining two free nodes: the hot matrix-vector product
+        // then avoids per-link array destructuring and boundary tests.
+        const inner = [];
+        endpoints.forEach(([a, b], l) => {
+          if (a >= 0 && b >= 0) inner.push(l);
+        });
         const layout = {
           idx,
           free,
-          endpoints
+          endpoints,
+          innerLink: Int32Array.from(inner),
+          innerA: Int32Array.from(inner, l => endpoints[l][0]),
+          innerB: Int32Array.from(inner, l => endpoints[l][1]),
+          innerG: new Float64Array(inner.length)
         };
         for (const name of ['D', 'b', 'x', 'r', 'z', 'p', 'Ap']) layout[name] = new Float64Array(free.length);
         // Bounded cache for callers that repeatedly change boundary-node selections.
@@ -342,6 +352,10 @@
         const {
           free,
           endpoints,
+          innerLink,
+          innerA,
+          innerB,
+          innerG,
           D,
           b,
           x,
@@ -374,15 +388,26 @@
           }
         }
         for (const d of D) TE.assert(d > 0 && Number.isFinite(d), 'Unanchored or invalid system.');
+        // Jacobi-weighted residual norm √(rᵀD⁻¹r) = √(r·z). The unweighted norm is dominated by
+        // high-conductance rows (Cu) and stopped before low-conductance regions were resolved.
+        let bDb = 0;
+        for (let i = 0; i < nf; i++) bDb += b[i] * b[i] / D[i];
+        // Zero right-hand side: the SPD system has the exact solution 0. Returning it directly keeps
+        // warm starts safe (a nonzero guess could never meet a zero relative target).
+        if (bDb === 0) {
+          free.forEach(node => out[node] = 0);
+          return out;
+        }
+        const ni = innerLink.length;
+        for (let k = 0; k < ni; k++) innerG[k] = conductance[innerLink[k]];
         const multiply = v => {
           for (let i = 0; i < nf; i++) Ap[i] = D[i] * v[i];
-          for (let l = 0; l < endpoints.length; l++) {
-            const [a, bb] = endpoints[l];
-            if (a >= 0 && bb >= 0) {
-              const g = conductance[l];
-              Ap[a] -= g * v[bb];
-              Ap[bb] -= g * v[a];
-            }
+          for (let k = 0; k < ni; k++) {
+            const a = innerA[k],
+              bb = innerB[k],
+              g = innerG[k];
+            Ap[a] -= g * v[bb];
+            Ap[bb] -= g * v[a];
           }
         };
         const dot = (a, b) => {
@@ -396,10 +421,6 @@
           z[i] = r[i] / D[i];
           p[i] = z[i];
         }
-        // Jacobi-weighted residual norm √(rᵀD⁻¹r) = √(r·z). The unweighted norm is dominated by
-        // high-conductance rows (Cu) and stopped before low-conductance regions were resolved.
-        let bDb = 0;
-        for (let i = 0; i < nf; i++) bDb += b[i] * b[i] / D[i];
         let rz = dot(r, z),
           norm = Math.sqrt(Math.max(rz, 0));
         const target = rtol * Math.max(Math.sqrt(bDb), 1e-300);
@@ -440,6 +461,7 @@
           this.boundaries = boundaries;
           this.electrical = electrical;
           this.frequency = 0;
+          this.undampedFailures = 0;
           mesh.map.forEach(id => TE.assert(Number.isInteger(id) && materials[id], 'Unknown material in map.'));
           TE.assert(['voltage', 'current', 'open_circuit'].includes(electrical.kind), 'Unknown electrical mode.');
           this.source = mesh.electrode(electrical.sourceSide, electrical.sourceRange);
@@ -537,9 +559,17 @@
           // and lose all precision when a resistive region sets the current; the link formula
           // then effectively ignored the resistor. Current entering the source:
           //   I = -Σ I_k (u_a - u_b)  ⇒  Iunit = -Σ g(Δu)²,  Ibase = Σ g·s·Δu.
-          const base = TE.graphSolve(m, g, zero, rhs, fixed);
+          // Warm starts from the previous solutions (same electrodes, slowly varying conductances)
+          // reach the unchanged CG tolerance in fewer iterations than a start from zero.
+          const base = TE.graphSolve(m, g, zero, rhs, fixed, this.lastBase ? {
+            initial: this.lastBase
+          } : undefined);
           this.sink.forEach(i => fixed.set(i, 1));
-          const unit = TE.graphSolve(m, g, zero, zero, fixed);
+          const unit = TE.graphSolve(m, g, zero, zero, fixed, this.lastUnit ? {
+            initial: this.lastUnit
+          } : undefined);
+          this.lastBase = base;
+          this.lastUnit = unit;
           let Iunit = 0,
             Ibase = 0;
           m.links.forEach((l, k) => {
@@ -610,6 +640,13 @@
           const b = this.balance(T, t),
             bc = this.thermal(t),
             m = this.mesh;
+          // Reused by the next time step, which starts from this exact state and time.
+          this.lastBalance = {
+            T,
+            t,
+            current: b.current,
+            terminalVoltage: b.terminalVoltage
+          };
           const residual = b.source.map((v, i) => v + bc.rhs[i] - bc.diag[i] * T[i] - (gammaDt ? b.cap[i] * (T[i] - target[i]) / gammaDt : 0));
           const scale = b.source.map((v, i) => Math.abs(v) + Math.abs(bc.rhs[i] - bc.diag[i] * T[i]) + (gammaDt ? Math.abs(b.cap[i] * (T[i] - target[i]) / gammaDt) : 0));
           m.links.forEach((e, k) => {
@@ -631,13 +668,32 @@
             watts
           };
         }
-        implicit(t, target, gammaDt, {
+        // Damping caps the Picard contraction at (1 − relaxation) per iteration: about 10 iterations
+        // per step at 0.85, versus 2–3 undamped. Acceptance tests are identical, so the damped
+        // iteration is only a fallback, used when the undamped one fails or stops contracting.
+        // After repeated failures the solver stays damped for the rest of the run.
+        implicit(t, target, gammaDt, options = {}) {
+          if (options.relaxation === undefined && this.undampedFailures < 3) {
+            try {
+              return this.picard(t, target, gammaDt, {
+                ...options,
+                relaxation: 1,
+                abortOnStall: true
+              });
+            } catch {
+              this.undampedFailures++;
+            }
+          }
+          return this.picard(t, target, gammaDt, options);
+        }
+        picard(t, target, gammaDt, {
           initial,
           tolerance = 2e-9,
           maxIterations = 100,
           relaxation = .85,
           residualAtol = 1e-9,
-          residualRtol = 1e-7
+          residualRtol = 1e-7,
+          abortOnStall = false
         } = {}) {
           TE.assert(Number.isFinite(tolerance) && tolerance > 0, 'Nonlinear tolerance must be positive.');
           TE.assert(Number.isInteger(maxIterations) && maxIterations >= 1, 'Nonlinear iteration limit must be a positive integer.');
@@ -646,7 +702,8 @@
           const m = this.mesh,
             bc = this.thermal(t);
           let T = [...initial],
-            error = Infinity;
+            error = Infinity,
+            stalls = 0;
           for (const [i, v] of bc.fixed) T[i] = v;
           for (let iteration = 0; iteration < maxIterations; iteration++) {
             const b = this.balance(T, t),
@@ -655,7 +712,10 @@
             const candidate = TE.graphSolve(m, b.p.map(p => p.k), diag, rhs, bc.fixed, {
               initial: T
             });
+            const previousError = error;
             error = Math.max(...candidate.map((v, i) => Math.abs(v - T[i])));
+            stalls = error > tolerance && error >= previousError ? stalls + 1 : 0;
+            TE.assert(!abortOnStall || stalls < 2, 'Picard iteration is not contracting.');
             TE.assert(candidate.every(v => Number.isFinite(v) && v > 0), 'Nonphysical temperature. Check excitation and material laws.');
             candidate.forEach(v => TE.checkRange(v, 'temperature'));
             if (error <= tolerance) {
@@ -781,6 +841,7 @@
           let temperatureError = Infinity,
             harmonicError = Infinity,
             lastCheckpoint = 0,
+            packageMs = 0,
             maxHeatResidual = 0,
             maxHeatResidualWatts = 0;
           const dt = 1 / (frequency * samples);
@@ -838,7 +899,8 @@
             for (let j = 0; j < samples; j++) {
               history.push([...T]);
               const time = ((cycle - 1) * samples + j) * dt;
-              const electrical = this.electric(T, this.properties(T).p, time);
+              const cached = this.lastBalance,
+                electrical = cached && cached.T === T && cached.t === time ? cached : this.electric(T, this.properties(T).p, time);
               terminal.current.push(electrical.current);
               terminal.terminalVoltage.push(electrical.terminalVoltage);
               const target = T.map((v, i) => older ? 4 * v / 3 - older[i] / 3 : v),
@@ -885,15 +947,21 @@
               harmonicError: Number.isFinite(harmonicError) ? harmonicError : null
             });
             if (cycle >= minPeriods && error <= 1) return packageCycle(true);
+            // First and last cycles are always saved. Intermediate checkpoints re-evaluate every sample
+            // and are throttled so packaging stays below about 10% of the run time.
             const now = Date.now();
-            if (onCheckpoint && (cycle === 1 || cycle === maxPeriods || cycle % checkpointEvery === 0 || now - lastCheckpoint >= checkpointIntervalMs)) {
+            if (onCheckpoint && (cycle === 1 || cycle === maxPeriods || (cycle % checkpointEvery === 0 || now - lastCheckpoint >= checkpointIntervalMs) && now - lastCheckpoint >= 9 * packageMs)) {
               onCheckpoint(packageCycle(false));
-              lastCheckpoint = now;
+              const done = Date.now();
+              packageMs = done - now;
+              lastCheckpoint = done;
             }
             previous = history;
             previousTerminal = terminalHarmonics;
           }
-          throw new Error(`Periodic state not reached in ${maxPeriods} cycles (combined error ${error.toExponential(2)}).`);
+          const failure = new Error(`Periodic state not reached in ${maxPeriods} cycles (combined error ${error.toExponential(2)}).`);
+          failure.unconverged = true;
+          throw failure;
         }
       }
       TE.Solver2D = Solver2D;
@@ -1462,7 +1530,8 @@
       };
       TE.runSweep = (c, emit = () => {}) => {
         const frequencies = TE.validateSweep(c);
-        let completed = 0;
+        let completed = 0,
+          unconverged = 0;
         for (let index = 0; index < frequencies.length; index++) {
           const frequency = frequencies[index],
             point = {
@@ -1474,6 +1543,7 @@
             type: 'sweepStart',
             ...point
           });
+          let last = null;
           try {
             const r = TE.run2D({
               ...c,
@@ -1487,11 +1557,14 @@
               type: 'progress',
               progress: p,
               ...point
-            }), r => emit({
-              type: 'checkpoint',
-              result: r,
-              ...point
-            }));
+            }), r => {
+              last = r;
+              emit({
+                type: 'checkpoint',
+                result: r,
+                ...point
+              });
+            });
             emit({
               type: 'sweepPoint',
               result: r,
@@ -1499,6 +1572,17 @@
             });
             completed++;
           } catch (e) {
+            // The final cycle is always checkpointed before the budget error is thrown.
+            if (e.unconverged && last && !last.converged && last.periods === last.config.maxPeriods) {
+              emit({
+                type: 'sweepPoint',
+                result: last,
+                message: e.message,
+                ...point
+              });
+              unconverged++;
+              continue;
+            }
             emit({
               type: 'sweepError',
               message: e.message,
@@ -1509,7 +1593,8 @@
         }
         emit({
           type: 'sweepDone',
-          completed
+          completed,
+          unconverged
         });
       };
       const mag = z => Math.hypot(z.re, z.im),

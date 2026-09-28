@@ -1,5 +1,7 @@
 {
   "files": [
+    "Air.json",
+    "Alumina.json",
     "Aluminum.json",
     "Bi2Te3.json",
     "Bi2Te3_n_type.json",

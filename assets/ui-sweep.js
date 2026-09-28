@@ -11,7 +11,8 @@
       x: Number(app.$('bodeX').value) / 100,
       y: Number(app.$('bodeY').value) / 100,
       scale: app.$('bodeScale').value,
-      dbReference: Number(app.$('bodeDb').value)
+      dbReference: Number(app.$('bodeDb').value),
+      representation: app.$('bodeRepresentation').value
     };
   };
   app.refreshSweepPoints = function refreshSweepPoints() {
@@ -49,22 +50,47 @@
     if (app.worker || !app.sweepResult?.results[i]) return;
     app.$('sweepPoint').value = String(i);
     app.accept(app.sweepResult.results[i], {preserveView: true});
-    app.$('status').textContent = `Sweep map / report: ${app.fmt(app.result.frequency)} Hz · ${app.result.converged ? 'converged' : 'unconverged, excluded from Bode'}`;
+    app.$('status').textContent = `Sweep map / report: ${app.fmt(app.result.frequency)} Hz · ${app.result.converged ? 'converged' : 'unconverged, excluded from Bode'}${app.inputsChanged ? ' · inputs changed since this sweep; run again to export.' : ''}`;
   };
+  // Fixed paper palette for printed and archived reports, independent of the interface theme.
+  app.reportPlotColors = Object.freeze({
+    text: '#193242',
+    grid: '#d8e0e5',
+    line: '#187d98',
+    point: '#be6733',
+    background: '#ffffff'
+  });
+  // Real/imaginary parts of the (normalized, referenced) phasor shown in the Bode rows.
+  app.complexBodeRows = rows => rows.map(r => {
+    if (r.magnitude === null || r.phase === null) return {...r, real: null, imag: null};
+    const rad = r.phase * Math.PI / 180;
+    return {...r, real: r.magnitude * Math.cos(rad), imag: r.magnitude * Math.sin(rad)};
+  });
+  // Both Bode charts for the chosen representation. dB applies only to the magnitude chart.
+  app.bodeCharts = function bodeCharts(rows, {representation = 'polar', ...opts} = {}) {
+    if (representation === 'complex') {
+      const complex = app.complexBodeRows(rows);
+      return [app.bodeSvg(complex, 'real', {...opts, db: false}), app.bodeSvg(complex, 'imag', {...opts, db: false})];
+    }
+    return [app.bodeSvg(rows, 'magnitude', opts), app.bodeSvg(rows, 'phase', opts)];
+  };
+  // key: 'magnitude' (optionally in dB), 'phase', 'real' or 'imag'.
   app.bodeSvg = function bodeSvg(rows, key, {
     log = true,
     db = false,
-    dbReference = 1
+    dbReference = 1,
+    colors = app.plotColors()
   } = {}) {
-    const colors = app.plotColors(), W = 580,
+    const W = 580,
       H = 240,
       L = 85,
       R = 20,
       T = 30,
       B = 48,
-      valid = rows.map(r => key === 'phase' ? r.phase : r.magnitude === null ? null : db ? r.magnitude > 0 ? 20 * Math.log10(r.magnitude / dbReference) : null : r.magnitude);
+      valid = rows.map(r => key !== 'magnitude' ? r[key] ?? null : r.magnitude === null ? null : db ? r.magnitude > 0 ? 20 * Math.log10(r.magnitude / dbReference) : null : r.magnitude);
     const numbers = valid.filter(v => v !== null && Number.isFinite(v));
-    const title = key === 'phase' ? 'Phase · °' : db ? `Magnitude · dB re ${app.fmt(dbReference)} ${rows[0]?.unit ?? ''}` : `Magnitude · ${rows[0]?.unit ?? ''}`;
+    const unit = rows[0]?.unit ?? '';
+    const title = key === 'phase' ? 'Phase · °' : key === 'real' ? `Real part · ${unit}` : key === 'imag' ? `Imaginary part · ${unit}` : db ? `Magnitude · dB re ${app.fmt(dbReference)} ${unit}` : `Magnitude · ${unit}`;
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${app.esc(title)}"><rect width="${W}" height="${H}" fill="${colors.background}"/><text x="${L}" y="16" fill="${colors.text}" font-size="11">${app.esc(title)}</text>`;
     if (!numbers.length) return svg + `<text x="85" y="100" fill="${colors.text}" font-size="12">No valid values for this selection.</text></svg>`;
     let lo = Math.min(...numbers),
@@ -111,7 +137,10 @@
     const spatial = !['terminalVoltage', 'current', 'impedance'].includes(app.$('bodeQuantity').value);
     app.$('bodeX').disabled = !spatial;
     app.$('bodeY').disabled = !spatial;
-    app.$('bodeDb').disabled = app.$('bodeScale').value !== 'db';
+    const complex = app.$('bodeRepresentation').value === 'complex';
+    // Real/imaginary parts are signed, so the dB scale does not apply to them.
+    app.$('bodeScale').disabled = complex;
+    app.$('bodeDb').disabled = complex || app.$('bodeScale').value !== 'db';
     // Imposed inactive references are unavailable; measured zeros can vary with frequency.
     for (const option of app.$('bodeReference').options) {
       const rows = TE.bodeRows(rs, {
@@ -131,51 +160,20 @@
     try {
       for (const id of ['bodeFloor', 'bodeX', 'bodeY']) TE.assert(app.$(id).value.trim() !== '', 'Complete Bode numerical inputs.');
       const rows = TE.bodeRows(rs, app.bodeOptions()),
-        db = app.$('bodeScale').value === 'db',
+        db = !complex && app.$('bodeScale').value === 'db',
         dbReference = Number(app.$('bodeDb').value);
       TE.assert(!db || Number.isFinite(dbReference) && dbReference > 0, 'The dB reference must be strictly positive.');
-      const opts = {
+      const [top, bottom] = app.bodeCharts(rows, {
+        representation: complex ? 'complex' : 'polar',
         log: app.sweepResult.config.sweep.spacing === 'log',
         db,
         dbReference
-      };
-      
-      const rep = app.$('bodeRepresentation')?.value || 'polar';
-      if (rep === 'complex') {
-        const complexRows = rows.map(r => {
-          if (r.magnitude === null || r.phase === null) return { ...r, real: null, imag: null };
-          const rad = r.phase * Math.PI / 180;
-          return { ...r, real: r.magnitude * Math.cos(rad), imag: r.magnitude * Math.sin(rad) };
-        });
-        
-        // Re-use bodeSvg but override the title handling for Real/Imaginary.
-        // To avoid modifying bodeSvg signatures, we'll manually replace the generic Magnitude/Phase SVG titles.
-        let realSvg = app.bodeSvg(complexRows, 'magnitude', opts);
-        let imagSvg = app.bodeSvg(complexRows, 'magnitude', opts);
-        
-        // Since bodeSvg uses 'magnitude' strictly to read the `.magnitude` key, we need to map our real/imag fields 
-        // to `.magnitude` temporarily just for the plotter.
-        const plotReal = complexRows.map(r => ({ ...r, magnitude: r.real }));
-        const plotImag = complexRows.map(r => ({ ...r, magnitude: r.imag }));
-        
-        realSvg = app.bodeSvg(plotReal, 'magnitude', { ...opts, db: false })
-                     .replace(/Magnitude ·/g, 'Real part ·')
-                     .replace(/Magnitude · dB/g, 'Real part · dB');
-        imagSvg = app.bodeSvg(plotImag, 'magnitude', { ...opts, db: false })
-                     .replace(/Magnitude ·/g, 'Imaginary part ·')
-                     .replace(/Magnitude · dB/g, 'Imaginary part · dB');
-                     
-        app.$('bodeMagnitude').innerHTML = realSvg;
-        app.$('bodePhase').innerHTML = imagSvg;
-        
-      } else {
-        app.$('bodeMagnitude').innerHTML = app.bodeSvg(rows, 'magnitude', opts);
-        app.$('bodePhase').innerHTML = app.bodeSvg(rows, 'phase', opts);
-      }
-
+      });
+      app.$('bodeMagnitude').innerHTML = top;
+      app.$('bodePhase').innerHTML = bottom;
       const reasons = [...new Set(rows.map(r => r.reason).filter(Boolean))];
-      app.$('bodeNote').textContent = `${spatial ? `Probe snaps to ${['temperature', 'voltage'].includes(app.$('bodeQuantity').value) ? 'node' : 'cell'} ${rows[0].nodeOrCell}: x=${app.fmt(rows[0].x_m * 1000)} mm, y=${app.fmt(rows[0].y_m * 1000)} mm. ` : ''}${reasons.join(' ')} Phase threshold applies to raw output amplitude; tiny harmonics need convergence checks.`;
-      app.$('bodeCsv').disabled = Boolean(app.worker);
+      app.$('bodeNote').textContent = `${spatial ? `Probe snaps to ${['temperature', 'voltage'].includes(app.$('bodeQuantity').value) ? 'node' : 'cell'} ${rows[0].nodeOrCell}: x=${app.fmt(rows[0].x_m * 1000)} mm, y=${app.fmt(rows[0].y_m * 1000)} mm. ` : ''}${reasons.join(' ')} Phase threshold applies to raw output amplitude; tiny harmonics need convergence checks.${complex ? ' Real/Imaginary parts use physical units; the dB scale applies only to magnitude.' : ''}`;
+      app.$('bodeCsv').disabled = Boolean(app.worker) || app.inputsChanged;
     } catch (e) {
       app.$('bodeNote').textContent = e.message;
       app.$('bodeMagnitude').textContent = '';

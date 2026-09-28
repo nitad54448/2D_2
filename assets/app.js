@@ -7,14 +7,11 @@
   };
   app.dirty = function dirty() {
     if (app.worker) return;
-    app.$('exportProfile').disabled = true;
+    // Exports stay disabled until a new result is displayed, including while browsing sweep points.
+    app.setExports(false);
+    if (app.result) app.inputsChanged = true;
     app.$('badge').textContent = app.result ? 'INPUTS CHANGED' : 'READY';
     app.$('badge').className = '';
-    app.$('exportResults').disabled = true;
-    app.$('exportCsv').disabled = true;
-    for (const id of ['exportMenuButton', 'exportPdf', 'exportZip']) app.$(id).disabled = true;
-    app.$('exportMenu').hidden = true;
-    app.$('exportMenuButton').setAttribute('aria-expanded', 'false');
     if (app.result) app.$('status').textContent = 'Inputs changed. Run again to update the displayed result.';
   };
   app.tab = function tab(name) {
@@ -191,7 +188,7 @@
   });
 
   const initPresets = async () => {
-    const fallback = ["Aluminum.json", "Bi2Te3.json", "Bi2Te3_n_type.json", "Copper.json", "Gold.json", "PbTe.json", "Platinum.json"];
+    const fallback = ["Air.json", "Alumina.json", "Aluminum.json", "Bi2Te3.json", "Bi2Te3_n_type.json", "Copper.json", "Gold.json", "PbTe.json", "Platinum.json"];
     let files = fallback;
     try {
       const res = await fetch('lib/index.json');

@@ -6,12 +6,18 @@
       report = TE.resultReport(r, {
         probe: reportProbe
       }),
-      opts = {
+      complex = options.representation === 'complex',
+      charts = app.bodeCharts(rows, {
+        representation: complex ? 'complex' : 'polar',
         log: s.config.sweep.spacing === 'log',
-        db: options.scale === 'db',
-        dbReference: options.dbReference ?? 1
-      };
-    const page = `<section class="page"><header>THERMOELECTRIC LAB · FREQUENCY SWEEP</header><h1>Bode summary</h1><p>${app.esc(s.status)} · ${s.results.filter(r => r.converged).length}/${s.frequencies.length} converged points. Detailed report below: ${app.fmt(r.frequency)} Hz.</p><p>Quantity: ${app.esc(options.quantity)} · harmonic ${options.harmonic} · reference ${app.esc(options.reference)} · normalization ${app.esc(options.normalization)} · phase threshold ${options.phaseFloor}. Phase ${options.unwrap ? 'unwrapped' : 'wrapped'}.</p><p>Table magnitudes use physical units; graphs follow the selected scale. dB reference: ${app.fmt(options.dbReference ?? 1)} in module units.</p><p>Probe X/Y: ${app.fmt(options.x * 100)}% / ${app.fmt(options.y * 100)}%. Impedance is (source − sink voltage) / current at 1ω. Other phases subtract n times the reference phase. Unconverged points are excluded.</p>${app.bodeSvg(rows, 'magnitude', opts)}${app.bodeSvg(rows, 'phase', opts)}<table><thead><tr><th>Hz</th><th>Module</th><th>Unit</th><th>Phase °</th><th>Status</th></tr></thead><tbody>${rows.map(v => `<tr><td>${app.fmt(v.frequency)}</td><td>${v.magnitude === null ? '—' : app.fmt(v.magnitude)}</td><td>${app.esc(v.unit)}</td><td>${v.phase === null ? '—' : app.fmt(v.phase)}</td><td>${app.esc(v.reason || 'Converged')}</td></tr>`).join('')}</tbody></table></section>`;
+        db: !complex && options.scale === 'db',
+        dbReference: options.dbReference ?? 1,
+        colors: app.reportPlotColors
+      }),
+      tableRows = complex ? app.complexBodeRows(rows) : rows,
+      value = v => v === null ? '—' : app.fmt(v),
+      scaleNote = complex ? 'Graphs show the real and imaginary parts of the referenced phasor, magnitude × cos/sin(phase), in physical units (dB does not apply).' : `Graphs follow the selected scale. dB reference: ${app.fmt(options.dbReference ?? 1)} in module units.`;
+    const page = `<section class="page"><header>THERMOELECTRIC LAB · FREQUENCY SWEEP</header><h1>Bode summary</h1><p>${app.esc(s.status)} · ${s.results.filter(r => r.converged).length}/${s.frequencies.length} converged points. Detailed report below: ${app.fmt(r.frequency)} Hz.</p><p>Quantity: ${app.esc(options.quantity)} · harmonic ${options.harmonic} · reference ${app.esc(options.reference)} · normalization ${app.esc(options.normalization)} · phase threshold ${options.phaseFloor}. Phase ${options.unwrap ? 'unwrapped' : 'wrapped'}.</p><p>Table magnitudes use physical units. ${scaleNote}</p><p>Probe X/Y: ${app.fmt(options.x * 100)}% / ${app.fmt(options.y * 100)}%. Impedance is (source − sink voltage) / current at 1ω. Other phases subtract n times the reference phase. Unconverged points are excluded.</p>${charts.join('')}<table><thead><tr><th>Hz</th><th>Module</th><th>Unit</th><th>Phase °</th>${complex ? '<th>Real</th><th>Imag</th>' : ''}<th>Status</th></tr></thead><tbody>${tableRows.map(v => `<tr><td>${app.fmt(v.frequency)}</td><td>${value(v.magnitude)}</td><td>${app.esc(v.unit)}</td><td>${value(v.phase)}</td>${complex ? `<td>${value(v.real)}</td><td>${value(v.imag)}</td>` : ''}<td>${app.esc(v.reason || 'Converged')}</td></tr>`).join('')}</tbody></table></section>`;
     report.html = report.html.replace('<section class="page">', page + '<section class="page">');
     return report;
   };

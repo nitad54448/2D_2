@@ -4,7 +4,7 @@
   const limit = 2 * 1024 * 1024 * 1024, jsonLimit = 256 * 1024 * 1024;
   TE.projectLimits = Object.freeze({archiveBytes: limit, jsonBytes: jsonLimit});
   const text = new TextDecoder('utf-8', {fatal: true});
-  const crcTable = Array.from({length: 256}, (_, i) => {
+  const crcTable = Uint32Array.from({length: 256}, (_, i) => {
     for (let k = 0; k < 8; k++) i = i & 1 ? 0xedb88320 ^ (i >>> 1) : i >>> 1;
     return i >>> 0;
   });
@@ -137,7 +137,7 @@
         assert(total === e.length, 'Decompressed ZIP size mismatch.');
         bytes = new Uint8Array(total); let at = 0; for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
       }
-      let crc = 0xffffffff; for (const b of bytes) crc = crcTable[(crc ^ b) & 255] ^ (crc >>> 8);
+      let crc = 0xffffffff; for (let i = 0, n = bytes.length; i < n; i++) crc = crcTable[(crc ^ bytes[i]) & 255] ^ (crc >>> 8);
       assert(((crc ^ 0xffffffff) >>> 0) === e.crc, 'Corrupt archive data: ' + name);
       try {
         return JSON.parse(text.decode(bytes), (key, value) => { assert(!['__proto__', 'constructor', 'prototype'].includes(key), 'Unsafe JSON property.'); return value; });
@@ -166,7 +166,8 @@
         assert(r.method !== 'steady' && r.frequency === frequencies[i] && same(r.config, {...config, mode: 'periodic', frequency: frequencies[i], sweep: {...config.sweep, enabled: false}}), 'Sweep point does not match the saved sweep model.');
         results.push(r);
       }
-      assert(status.status !== 'complete' || results.length === frequencies.length && results.every(r => r.converged), 'Incomplete data marked as a completed sweep.');
+      // A completed sweep may contain points that exhausted their cycle budget (kept as unconverged).
+    assert(status.status !== 'complete' || results.length === frequencies.length, 'Incomplete data marked as a completed sweep.');
       assert(Number.isInteger(selected) && selected >= 0 && selected < results.length, 'Invalid selected sweep point.');
       result = results[selected];
       sweep = {config, frequencies, results, status: status.status === 'running' ? 'stopped' : status.status, message: status.message ?? 'Imported sweep snapshot.'};
@@ -197,5 +198,6 @@
     assert([1, 2, 3].includes(o.harmonic) && typeof o.unwrap === 'boolean', 'Invalid Bode harmonic/phase mode.');
     for (const key of ['x', 'y']) assert(Number.isFinite(o[key]) && o[key] >= 0 && o[key] <= 1, 'Invalid Bode probe.');
     assert(Number.isFinite(o.phaseFloor) && o.phaseFloor >= 0 && Number.isFinite(o.dbReference) && o.dbReference > 0, 'Invalid Bode threshold/reference.');
+    assert(o.representation === undefined || ['polar', 'complex'].includes(o.representation), 'Invalid Bode representation.');
   };
 })(globalThis.TE);

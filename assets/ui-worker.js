@@ -1,11 +1,21 @@
 (function (app) {
   'use strict';
+  // One switch for every result export. Bode CSV is re-enabled only by drawBode, which also checks
+  // that the current Bode selection is valid.
+  app.setExports = function setExports(enabled) {
+    for (const id of ['exportMenuButton', 'exportPdf', 'exportZip', 'exportResults', 'exportCsv', 'exportProfile']) app.$(id).disabled = !enabled;
+    if (enabled) return;
+    app.$('bodeCsv').disabled = true;
+    app.$('exportMenu').hidden = true;
+    app.$('exportMenuButton').setAttribute('aria-expanded', 'false');
+  };
   app.accept = function accept(r, {preserveView = false} = {}) {
     const previous = preserveView ? app.captureResultView() : null;
     TE.checkResult(r);
     app.result = r;
+    // A newly displayed result matches the inputs; browsing saved sweep points keeps the edited state.
+    if (!preserveView) app.inputsChanged = false;
     app.$('profileTime').value = '0';
-    app.$('exportProfile').disabled = false;
     const periodic = r.method !== 'steady';
     app.probe = Math.floor(r.config.ny / 2) * (r.config.nx + 1) + Math.floor(r.config.nx / 2);
     app.$('harmonic').value = '0';
@@ -29,9 +39,7 @@
         `Heat balance: normalized residual ${app.fmt(diagnostics.heatResidualNormalized)}; maximum free-node residual ${app.fmt(diagnostics.heatResidualWatts)} W. Acceptance requires normalized errors ≤ 1.`
       : '';
     app.$('spectrum').innerHTML = hs.map((z, n) => `<tr><td>${n ? n + 'ω' : 'DC'}</td><td>${n ? app.fmt(n * r.frequency) : '0'} Hz</td><td>${app.amp(z).toExponential(5)}</td><td>${app.amp(z) > 1e-16 ? app.phase(z).toFixed(3) + '°' : '—'}</td><td>${z.re.toExponential(5)}</td><td>${z.im.toExponential(5)}</td></tr>`).join('');
-    app.$('exportResults').disabled = false;
-    app.$('exportCsv').disabled = false;
-    for (const id of ['exportMenuButton', 'exportPdf', 'exportZip']) app.$(id).disabled = false;
+    app.setExports(!app.inputsChanged);
     app.$('exportStatus').textContent = '';
     if (previous) app.restoreResultView(previous, r);
     app.tab('results');
@@ -47,12 +55,11 @@
   app.clearResults = function clearResults(message = 'Your 2D response will appear here.') {
     app.result = null;
     app.sweepResult = null;
+    app.inputsChanged = false;
     app.probe = 0;
     app.$('bodeCard').hidden = true;
     app.$('sweepPoint').innerHTML = '';
-    for (const id of ['exportMenuButton', 'exportPdf', 'exportZip', 'exportResults', 'exportCsv', 'exportProfile', 'bodeCsv']) app.$(id).disabled = true;
-    app.$('exportMenu').hidden = true;
-    app.$('exportMenuButton').setAttribute('aria-expanded', 'false');
+    app.setExports(false);
     app.$('exportStatus').textContent = '';
     app.$('resultEmpty').textContent = message;
     app.$('resultEmpty').hidden = false;
@@ -121,12 +128,7 @@
       index: 0
     } : null;
     app.lock(true);
-    app.$('exportProfile').disabled = true;
-    app.$('exportResults').disabled = true;
-    app.$('exportCsv').disabled = true;
-    for (const id of ['exportMenuButton', 'exportPdf', 'exportZip', 'bodeCsv']) app.$(id).disabled = true;
-    app.$('exportMenu').hidden = true;
-    app.$('exportMenuButton').setAttribute('aria-expanded', 'false');
+    app.setExports(false);
     app.$('badge').textContent = 'COMPUTING';
     app.$('badge').className = '';
     app.$('status').textContent = 'Solving coupled 2D transport…';
@@ -151,9 +153,12 @@
       const url = URL.createObjectURL(new Blob([TE.workerSource()], {
         type: 'text/javascript'
       }));
-      app.worker = new Worker(url);
+      const worker = new Worker(url);
+      app.worker = worker;
       URL.revokeObjectURL(url);
-      app.worker.onmessage = event => {
+      // Ignore anything still queued from a worker that was stopped or replaced.
+      worker.onmessage = event => {
+        if (app.worker !== worker) return;
         let data;
         try {
           data = TE.decodeWorkerMessage(event.data);
@@ -190,12 +195,14 @@
           app.sweepResult = app.activeSweep;
           app.refreshSweepPoints();
           app.drawBode();
+          if (!data.result.converged) app.$('status').textContent = `Frequency ${data.index + 1}/${data.total} · ${app.fmt(data.frequency)} Hz did not converge in ${data.result.periods} cycles. Kept as unconverged (excluded from Bode); continuing.`;
         } else if (data.type === 'sweepDone') {
           app.worker.terminate();
           app.worker = null;
           app.stopClock();
           app.lock(false);
-          app.finishSweep('Sweep completed.', true);
+          const unconverged = app.activeSweep.results.filter(r => !r.converged).length;
+          app.finishSweep(unconverged ? `Sweep completed with ${unconverged} unconverged point(s), excluded from Bode.` : 'Sweep completed.', true);
         } else if (data.type === 'sweepError' || data.type === 'error') finishError('Calculation failed: ' + data.message);else if (data.type === 'result') {
           try {
             TE.checkResult(data.result);
@@ -214,8 +221,10 @@
           app.$('status').textContent = 'Computed successfully. Refine the mesh and time steps to check accuracy.';
         }
       };
-      app.worker.onerror = e => finishError('Worker error: ' + e.message);
-      app.worker.postMessage(app.config);
+      worker.onerror = e => {
+        if (app.worker === worker) finishError('Worker error: ' + e.message);
+      };
+      worker.postMessage(app.config);
     } catch (e) {
       finishError('Unable to start: ' + e.message);
     }

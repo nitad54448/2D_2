@@ -133,7 +133,7 @@
     };
   };
   // Standard ZIP STORE (no external dependencies). CRC computed incrementally per Blob.
-  const crcTable = Array.from({
+  const crcTable = Uint32Array.from({
     length: 256
   }, (_, i) => {
     for (let j = 0; j < 8; j++) i = i & 1 ? 0xedb88320 ^ i >>> 1 : i >>> 1;
@@ -156,7 +156,7 @@
           value
         } = await reader.read();
         if (done) break;
-        for (const b of value) crc = crcTable[(crc ^ b) & 255] ^ crc >>> 8;
+        for (let i = 0, n = value.length; i < n; i++) crc = crcTable[(crc ^ value[i]) & 255] ^ crc >>> 8;
       }
       crc = (crc ^ 0xffffffff) >>> 0;
       const header = new Uint8Array(30 + name.length),
