@@ -4,7 +4,8 @@
     text: '#a5bac8', grid: '#3e5668', line: '#73d8d0', point: '#f0ad72', background: '#121c26',
     source: '#ffffff', sink: '#ef95df', halo: '#101820', mesh: '#0b141d'
   };
-  app.canvasFrame = function canvasFrame(id, c) {
+  // gutter: extra margin on every side, used by the geometry view for electrode labels.
+  app.canvasFrame = function canvasFrame(id, c, gutter = 0) {
     const canvas = app.$(id),
       width = canvas.clientWidth || 700,
       height = canvas.clientHeight || 400,
@@ -14,18 +15,23 @@
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    let w = width - 80,
-      h = height - 65;
+    const boxW = Math.max(1, width - 80 - 2 * gutter),
+      boxH = Math.max(1, height - 65 - 2 * gutter);
+    let w = boxW,
+      h = boxH;
     if (w / h > c.lx / c.ly) w = h * c.lx / c.ly;else h = w * c.ly / c.lx;
-    const left = 50 + (width - 80 - w) / 2,
-      top = 22 + (height - 65 - h) / 2;
+    const left = 50 + gutter + (boxW - w) / 2,
+      top = 22 + gutter + (boxH - h) / 2;
     ctx.fillStyle = app.plotColors().text;
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
+    let tickWidth = 0;
     for (let i = 0; i <= 4; i++) {
       ctx.fillText(app.fmt(c.lx * 1000 * i / 4), left + w * i / 4, top + h + 19);
       ctx.textAlign = 'right';
-      ctx.fillText(app.fmt(c.ly * 1000 * i / 4), left - 9, top + h - h * i / 4 + 3);
+      const yTick = app.fmt(c.ly * 1000 * i / 4);
+      tickWidth = Math.max(tickWidth, ctx.measureText(yTick).width);
+      ctx.fillText(yTick, left - 9, top + h - h * i / 4 + 3);
       ctx.textAlign = 'center';
     }
     ctx.fillText('x · mm', left + w / 2, top + h + 37);
@@ -36,10 +42,12 @@
       left,
       top,
       w,
-      h
+      h,
+      tickWidth
     };
   };
-  app.contacts = function contacts(frame, c) {
+  // labels: name each electrode outside the domain, beside its bar (needs a frame with a gutter).
+  app.contacts = function contacts(frame, c, {labels = false} = {}) {
     const {
       ctx,
       left,
@@ -69,13 +77,35 @@
       const stroke = ctx.strokeStyle;
       ctx.lineWidth = 8; ctx.strokeStyle = colors.halo; ctx.stroke();
       ctx.lineWidth = 5; ctx.strokeStyle = stroke; ctx.stroke();
+      if (labels) app.contactLabel(frame, name, side, (start + end) / 2, stroke);
     }
     ctx.lineWidth = 1;
+  };
+  // Left/right labels run along the edge (outside the y tick labels); top/bottom labels sit on
+  // their own row above the domain or below the x-axis title.
+  app.contactLabel = function contactLabel({ctx, left, top, w, h, tickWidth}, name, side, middle, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (side === 'left' || side === 'right') {
+      const x = side === 'left' ? Math.max(7, left - 9 - tickWidth - 10) : left + w + 13;
+      ctx.translate(x, top + h * (1 - middle));
+      ctx.rotate(side === 'left' ? -Math.PI / 2 : Math.PI / 2);
+      ctx.fillText(name, 0, 0);
+    } else {
+      const half = ctx.measureText(name).width / 2;
+      // Keep a top label clear of the "y · mm" axis title at the top-left corner.
+      const x = side === 'top' ? Math.max(left + w * middle, left + 16 + half) : left + w * middle;
+      ctx.fillText(name, x, side === 'top' ? top - 12 : top + h + 50);
+    }
+    ctx.restore();
   };
   app.drawGeometry = function drawGeometry() {
     if (app.$('geometry').hidden) return;
     const c = app.config,
-      f = app.canvasFrame('geometryCanvas', c),
+      f = app.canvasFrame('geometryCanvas', c, 16),
       colors = app.plotColors();
     app.geomFrame = f;
     const {
@@ -93,7 +123,7 @@
       ctx.strokeStyle = colors.mesh;
       ctx.strokeRect(left + i * w / c.nx, top + (c.ny - 1 - j) * h / c.ny, w / c.nx, h / c.ny);
     }
-    app.contacts(f, c);
+    app.contacts(f, c, {labels: true});
     app.$('gridInfo').textContent = `${c.nx} × ${c.ny} = ${c.nx * c.ny} elements · ${(c.nx + 1) * (c.ny + 1)} nodes`;
   };
   app.color = function color(t) {
