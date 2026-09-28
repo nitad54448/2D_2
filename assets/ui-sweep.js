@@ -49,7 +49,7 @@
   app.selectSweepPoint = function selectSweepPoint(i) {
     if (app.worker || !app.sweepResult?.results[i]) return;
     app.$('sweepPoint').value = String(i);
-    app.accept(app.sweepResult.results[i]);
+    app.accept(app.sweepResult.results[i], {preserveView: true});
     app.$('status').textContent = `Sweep map / report: ${app.fmt(app.result.frequency)} Hz · ${app.result.converged ? 'converged' : 'unconverged, excluded from Bode'}`;
   };
   app.bodeSvg = function bodeSvg(rows, key, {
@@ -57,7 +57,7 @@
     db = false,
     dbReference = 1
   } = {}) {
-    const W = 580,
+    const colors = app.plotColors(), W = 580,
       H = 240,
       L = 85,
       R = 20,
@@ -66,8 +66,8 @@
       valid = rows.map(r => key === 'phase' ? r.phase : r.magnitude === null ? null : db ? r.magnitude > 0 ? 20 * Math.log10(r.magnitude / dbReference) : null : r.magnitude);
     const numbers = valid.filter(v => v !== null && Number.isFinite(v));
     const title = key === 'phase' ? 'Phase · °' : db ? `Magnitude · dB re ${app.fmt(dbReference)} ${rows[0]?.unit ?? ''}` : `Magnitude · ${rows[0]?.unit ?? ''}`;
-    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${app.esc(title)}"><rect width="${W}" height="${H}" fill="#121c26"/><text x="${L}" y="16" fill="#c9dce7" font-size="11">${app.esc(title)}</text>`;
-    if (!numbers.length) return svg + '<text x="85" y="100" fill="#b7cbd7" font-size="12">No valid values for this selection.</text></svg>';
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${app.esc(title)}"><rect width="${W}" height="${H}" fill="${colors.background}"/><text x="${L}" y="16" fill="${colors.text}" font-size="11">${app.esc(title)}</text>`;
+    if (!numbers.length) return svg + `<text x="85" y="100" fill="${colors.text}" font-size="12">No valid values for this selection.</text></svg>`;
     let lo = Math.min(...numbers),
       hi = Math.max(...numbers),
       pad = hi === lo ? Math.max(Math.abs(lo) * .05, 1e-12) : (hi - lo) * .1;
@@ -81,7 +81,7 @@
     for (let i = 0; i <= 4; i++) {
       const v = lo + (hi - lo) * i / 4,
         f = start + (end - start) * i / 4;
-      svg += `<path d="M${L} ${Y(v)}H${W - R}" stroke="#304552"/><text x="${L - 7}" y="${Y(v) + 3}" text-anchor="end" fill="#b7cbd7" font-size="10">${app.fmt(v)}</text><text x="${L + (W - L - R) * i / 4}" y="${H - 25}" text-anchor="middle" fill="#b7cbd7" font-size="10">${app.fmt(log ? 10 ** f : f)}</text>`;
+      svg += `<path d="M${L} ${Y(v)}H${W - R}" stroke="${colors.grid}"/><text x="${L - 7}" y="${Y(v) + 3}" text-anchor="end" fill="${colors.text}" font-size="10">${app.fmt(v)}</text><text x="${L + (W - L - R) * i / 4}" y="${H - 25}" text-anchor="middle" fill="${colors.text}" font-size="10">${app.fmt(log ? 10 ** f : f)}</text>`;
     }
     let path = '',
       pen = false;
@@ -93,11 +93,11 @@
       path += (pen ? 'L' : 'M') + X(rows[i].frequency) + ' ' + Y(v) + ' ';
       pen = true;
     });
-    svg += `<path d="${path}" fill="none" stroke="#73d8d0" stroke-width="2"/>`;
+    svg += `<path d="${path}" fill="none" stroke="${colors.line}" stroke-width="2"/>`;
     valid.forEach((v, i) => {
-      if (v !== null && Number.isFinite(v)) svg += `<circle data-bode-point="${i}" cx="${X(rows[i].frequency)}" cy="${Y(v)}" r="5" fill="#f0ad72" style="cursor:pointer"><title>${app.fmt(rows[i].frequency)} Hz · ${app.fmt(v)}</title></circle>`;
+      if (v !== null && Number.isFinite(v)) svg += `<circle data-bode-point="${i}" cx="${X(rows[i].frequency)}" cy="${Y(v)}" r="5" fill="${colors.point}" style="cursor:pointer"><title>${app.fmt(rows[i].frequency)} Hz · ${app.fmt(v)}</title></circle>`;
     });
-    return svg + `<text x="${W - R}" y="${H - 5}" text-anchor="end" fill="#b7cbd7" font-size="10">Excitation frequency · Hz${log ? ' · logarithmic axis' : ''}</text></svg>`;
+    return svg + `<text x="${W - R}" y="${H - 5}" text-anchor="end" fill="${colors.text}" font-size="10">Excitation frequency · Hz${log ? ' · logarithmic axis' : ''}</text></svg>`;
   };
   app.drawBode = function drawBode() {
     if (!app.sweepResult?.results.length) return;

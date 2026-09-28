@@ -1,6 +1,7 @@
 (function (app) {
   'use strict';
-  app.accept = function accept(r) {
+  app.accept = function accept(r, {preserveView = false} = {}) {
+    const previous = preserveView ? app.captureResultView() : null;
     TE.checkResult(r);
     app.result = r;
     app.$('profileTime').value = '0';
@@ -32,6 +33,7 @@
     app.$('exportCsv').disabled = false;
     for (const id of ['exportMenuButton', 'exportPdf', 'exportZip']) app.$(id).disabled = false;
     app.$('exportStatus').textContent = '';
+    if (previous) app.restoreResultView(previous, r);
     app.tab('results');
   };
   app.stopClock = function stopClock() {
@@ -58,7 +60,7 @@
   };
   app.lock = function lock(value) {
     document.querySelectorAll('.settings').forEach(e => e.disabled = value);
-    for (const id of ['preset', 'import', 'addMaterial', 'run']) app.$(id).disabled = value;
+    for (const id of ['preset', 'import', 'importProject', 'addMaterial', 'run', 'save']) app.$(id).disabled = value;
     app.$('cancel').hidden = !value;
     if (!value) {
       app.modes();
@@ -66,6 +68,7 @@
     }
   };
   app.runSimulation = () => {
+    if (app.worker || app.importingProject) return;
     try {
       app.applyGeometry();
       TE.from2DConfig(app.config);

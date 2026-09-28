@@ -984,6 +984,7 @@
         const probeTemperatures = new Set([300]),
           thermalSignals = {};
         if (!object(c.thermal)) add('thermal', 'Define all four thermal boundaries.');
+        else for (const side of Object.keys(c.thermal)) if (!['left', 'right', 'bottom', 'top'].includes(side)) add('thermal', 'Unknown thermal boundary: ' + side);
         for (const side of ['left', 'right', 'bottom', 'top']) {
           const b = c.thermal?.[side],
             p = 'thermal.' + side;
@@ -1632,6 +1633,27 @@
           qy: 1e-9
         })
       });
+      TE.cellPhasors = (r, key, n) => {
+        const raw = r.method === 'steady' ? r[key].map(re => ({re, im: 0})) : r.harmonics[key][n];
+        if (!['temperature', 'voltage'].includes(key)) return raw;
+        const c = r.config;
+        return Array.from({length: c.nx * c.ny}, (_, k) => {
+          const a = Math.floor(k / c.nx) * (c.nx + 1) + k % c.nx;
+          const ids = [a, a + 1, a + c.nx + 1, a + c.nx + 2];
+          return {re: ids.reduce((sum, i) => sum + raw[i].re, 0) / 4,
+            im: ids.reduce((sum, i) => sum + raw[i].im, 0) / 4};
+        });
+      };
+      TE.harmonicMap = (r, key, n = 0, representation = 'amplitude') => {
+        TE.assert(['amplitude', 'phase', 'real', 'imaginary'].includes(representation), 'Unknown harmonic representation.');
+        if (key === 'J') {
+          const x = TE.cellPhasors(r, 'Jx', n), y = TE.cellPhasors(r, 'Jy', n);
+          return {values: x.map((z, i) => Math.hypot(z.re, z.im, y[i].re, y[i].im))};
+        }
+        if (n > 0 && representation === 'phase') return TE.phaseMap(r, key, n);
+        return {values: TE.cellPhasors(r, key, n).map(z => !n || representation === 'real' ? z.re :
+          representation === 'imaginary' ? z.im : Math.hypot(z.re, z.im))};
+      };
       TE.phaseMap = (r, key, n, {
         relative = TE.phaseMapSettings.relative,
         absolute = TE.phaseMapSettings.absolute[key]
@@ -1644,18 +1666,7 @@
         let peak = 0;
         for (const z of raw) peak = Math.max(peak, Math.hypot(z.re, z.im));
         const threshold = Math.max(absolute, relative * peak);
-        const phasors = nodal ? Array.from({
-          length: c.nx * c.ny
-        }, (_, k) => {
-          const i = k % c.nx,
-            j = Math.floor(k / c.nx),
-            a = j * (c.nx + 1) + i,
-            ids = [a, a + 1, a + c.nx + 1, a + c.nx + 2];
-          return {
-            re: ids.reduce((s, i) => s + raw[i].re, 0) / 4,
-            im: ids.reduce((s, i) => s + raw[i].im, 0) / 4
-          };
-        }) : raw;
+        const phasors = TE.cellPhasors(r, key, n);
         const values = phasors.map(z => Math.hypot(z.re, z.im) > threshold ? Math.atan2(z.im, z.re) * 180 / Math.PI : null);
         return {
           values,

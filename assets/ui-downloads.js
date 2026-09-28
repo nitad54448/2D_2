@@ -91,7 +91,7 @@
     }
   };
   app.exportZip = async () => {
-    if (!app.result || app.exporting) return;
+    if (!app.result || app.exporting || app.importingProject) return;
     app.exporting = true;
     const saved = app.result,
       savedProbe = app.probe,
@@ -99,17 +99,36 @@
         ...app.sweepResult,
         results: [...app.sweepResult.results]
       } : null,
-      savedOptions = app.bodeOptions();
+      savedOptions = savedSweep ? app.bodeOptions() : null,
+      savedView = app.captureResultView();
     app.$('exportZip').disabled = true;
     app.$('exportStatus').textContent = 'Preparing complete results archive…';
     try {
       await new Promise(resolve => setTimeout(resolve, 0));
+      if (savedOptions) TE.validateProjectBode(savedOptions);
       const files = savedSweep ? await app.sweepFiles(savedSweep, savedOptions, saved, savedProbe) : await TE.completeResultsFiles(saved, {
         probe: savedProbe
       });
+      files.push({name: 'project.json', data: JSON.stringify({
+        format: 'thermoelectric-lab-project', version: 1,
+        kind: savedSweep ? 'sweep' : 'single',
+        selectedIndex: savedSweep ? savedSweep.results.indexOf(saved) : 0,
+        view: savedView, bodeOptions: savedOptions
+      }, null, 2)});
+      const manifest = files.find(f => f.name === 'manifest.json');
+      if (manifest) { const data = JSON.parse(manifest.data); data.files.push('project.json'); manifest.data = JSON.stringify(data, null, 2); }
+      const readme = files.find(f => f.name === 'README.txt');
+      if (readme) readme.data += '\nReopen this ZIP using Import Project in Thermoelectric Lab. It restores the saved model, all retained results, and the selected view. No recalculation is required.\n';
+      const jsonBytes = files.filter(f => f.name.endsWith('.json')).reduce((sum, f) => sum + new Blob([f.data]).size, 0);
+      TE.assert(jsonBytes <= TE.projectLimits.jsonBytes, 'Project JSON exceeds the import limit. Reduce retained sweep points or time steps.');
       const zip = await TE.zipFiles(files);
-      app.download('thermoelectric-2d-complete-results.zip', zip, 'application/zip');
-      app.$('exportStatus').textContent = 'Complete archive downloaded: report, SVG figures, JSON and CSV data.';
+      TE.assert(zip.size <= TE.projectLimits.archiveBytes, 'Project ZIP exceeds the 2 GiB import limit. Reduce retained sweep points or time steps.');
+      const now = new Date(),
+        pad = value => String(value).padStart(2, '0'),
+        date = [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('-'),
+        time = [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join('-');
+      app.download(`TE_2D_${date}_${time}.zip`, zip, 'application/zip');
+      app.$('exportStatus').textContent = 'Project ZIP downloaded. Use Import Project to reopen the model, saved results and view. Reports, SVG figures and CSV data are also included.';
     } catch (e) {
       app.$('exportStatus').textContent = 'ZIP export failed: ' + e.message;
     } finally {

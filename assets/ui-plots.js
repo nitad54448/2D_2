@@ -1,5 +1,9 @@
 (function (app) {
   'use strict';
+  app.plotColors = () => globalThis.TETheme?.colors() ?? {
+    text: '#a5bac8', grid: '#3e5668', line: '#73d8d0', point: '#f0ad72', background: '#121c26',
+    source: '#ffffff', sink: '#ef95df', halo: '#101820', mesh: '#0b141d'
+  };
   app.canvasFrame = function canvasFrame(id, c) {
     const canvas = app.$(id),
       width = canvas.clientWidth || 700,
@@ -15,7 +19,7 @@
     if (w / h > c.lx / c.ly) w = h * c.lx / c.ly;else h = w * c.ly / c.lx;
     const left = 50 + (width - 80 - w) / 2,
       top = 22 + (height - 65 - h) / 2;
-    ctx.fillStyle = '#839aa9';
+    ctx.fillStyle = app.plotColors().text;
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     for (let i = 0; i <= 4; i++) {
@@ -43,6 +47,7 @@
       w,
       h
     } = frame;
+    const colors = app.plotColors();
     ctx.lineWidth = 5;
     for (const name of ['source', 'sink']) {
       const side = c.electrical[name + 'Side'],
@@ -50,7 +55,7 @@
         count = ['left', 'right'].includes(side) ? c.ny : c.nx,
         start = Math.ceil(range[0] * count - 1e-10) / count,
         end = Math.floor(range[1] * count + 1e-10) / count;
-      ctx.strokeStyle = name === 'source' ? '#ffffff' : '#e47cd3';
+      ctx.strokeStyle = name === 'source' ? colors.source : colors.sink;
       ctx.beginPath();
       if (side === 'left' || side === 'right') {
         const x = left + (side === 'right' ? w : 0);
@@ -61,14 +66,17 @@
         ctx.moveTo(left + w * start, y);
         ctx.lineTo(left + w * end, y);
       }
-      ctx.stroke();
+      const stroke = ctx.strokeStyle;
+      ctx.lineWidth = 8; ctx.strokeStyle = colors.halo; ctx.stroke();
+      ctx.lineWidth = 5; ctx.strokeStyle = stroke; ctx.stroke();
     }
     ctx.lineWidth = 1;
   };
   app.drawGeometry = function drawGeometry() {
     if (app.$('geometry').hidden) return;
     const c = app.config,
-      f = app.canvasFrame('geometryCanvas', c);
+      f = app.canvasFrame('geometryCanvas', c),
+      colors = app.plotColors();
     app.geomFrame = f;
     const {
       ctx,
@@ -82,7 +90,7 @@
       ctx.globalAlpha = .75;
       ctx.fillRect(left + i * w / c.nx, top + (c.ny - 1 - j) * h / c.ny, w / c.nx, h / c.ny);
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = '#0b141d';
+      ctx.strokeStyle = colors.mesh;
       ctx.strokeRect(left + i * w / c.nx, top + (c.ny - 1 - j) * h / c.ny, w / c.nx, h / c.ny);
     }
     app.contacts(f, c);
@@ -96,7 +104,7 @@
     return `rgb(${stops[i].map((v, k) => Math.round(v + (stops[i + 1][k] - v) * f)).join(',')})`;
   };
   app.chart = function chart(id, x, y, label, xLabel = 'Time · ms') {
-    const el = app.$(id),
+    const colors = app.plotColors(), el = app.$(id),
       W = el.clientWidth || 450,
       H = 210,
       L = 65,
@@ -115,14 +123,14 @@
     }
     const X = v => L + (v - x[0]) / (x.at(-1) - x[0] || 1) * (W - L - R),
       Y = v => H - B - (v - lo) / (hi - lo) * (H - B - T);
-    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${app.esc(label)}"><text x="${L}" y="11" fill="#8299a8" font-size="9">${app.esc(label)}</text>`;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${app.esc(label)}"><text x="${L}" y="11" fill="${colors.text}" font-size="9">${app.esc(label)}</text>`;
     for (let i = 0; i < 5; i++) {
       const v = lo + (hi - lo) * i / 4,
         xx = x[0] + (x.at(-1) - x[0]) * i / 4;
-      s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#293b49" stroke-dasharray="3 5"/><text x="${L - 8}" y="${Y(v) + 3}" text-anchor="end" fill="#8299a8" font-size="9">${app.fmt(v)}</text><text x="${X(xx)}" y="${H - 18}" text-anchor="middle" fill="#8299a8" font-size="9">${app.fmt(xx)}</text>`;
+      s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${colors.grid}" stroke-dasharray="3 5"/><text x="${L - 8}" y="${Y(v) + 3}" text-anchor="end" fill="${colors.text}" font-size="9">${app.fmt(v)}</text><text x="${X(xx)}" y="${H - 18}" text-anchor="middle" fill="${colors.text}" font-size="9">${app.fmt(xx)}</text>`;
     }
-    if (x.length === 1) s += `<circle cx="${X(x[0])}" cy="${Y(y[0])}" r="3" fill="#73d8d0"/>`;
-    el.innerHTML = s + `<path d="${x.map((v, i) => `${i ? 'L' : 'M'}${X(v)},${Y(y[i])}`).join(' ')}" fill="none" stroke="#73d8d0" stroke-width="2"/><text x="${W - R}" y="${H - 2}" text-anchor="end" fill="#8299a8" font-size="9">${app.esc(xLabel)}</text></svg>`;
+    if (x.length === 1) s += `<circle cx="${X(x[0])}" cy="${Y(y[0])}" r="3" fill="${colors.line}"/>`;
+    el.innerHTML = s + `<path d="${x.map((v, i) => `${i ? 'L' : 'M'}${X(v)},${Y(y[i])}`).join(' ')}" fill="none" stroke="${colors.line}" stroke-width="2"/><text x="${W - R}" y="${H - 2}" text-anchor="end" fill="${colors.text}" font-size="9">${app.esc(xLabel)}</text></svg>`;
   };
   app.drawResults = function drawResults() {
     if (!app.result || app.$('results').hidden) return;
@@ -138,27 +146,17 @@
     }));
     const vecX = valuesFor('Jx'),
       vecY = valuesFor('Jy');
-    let values;
-    if (field === 'J') {
-      values = vecX.map((z, i) => Math.hypot(app.amp(z), app.amp(vecY[i])));
-      app.$('representation').disabled = true;
-    } else {
-      const z = valuesFor(field);
-      values = z.map(z => n ? representation === 'phase' ? app.phase(z) : representation === 'real' ? z.re : app.amp(z) : z.re);
-      app.$('representation').disabled = !n;
-    }
-    // Keep the user's harmonic representation when temporarily viewing DC or |J|.
-    app.$('representationHelp').textContent = field === 'J' ? 'Current magnitude uses the vector norm; phase and real-part selection do not apply.' : !n ? 'DC is the signed mean value. Select 1ω, 2ω or 3ω to view peak amplitude, phase or real part.' : 'Amplitude is the peak magnitude of this harmonic (not RMS). Phase and real part use the cosine reference. For signed Peltier heating/cooling under AC, select temperature at 1ω and Real part; amplitude removes its sign.';
+    const map = TE.harmonicMap(r, field, n, representation), values = map.values;
+    app.$('representation').disabled = field === 'J' || !n;
+    app.$('representationHelp').textContent = field === 'J'
+      ? 'Vector norm √(|Jx|² + |Jy|²); not a harmonic of instantaneous |J|. Choose Jx or Jy for phase, Re or Im.'
+      : !n ? 'DC is the signed mean value. Select 1ω, 2ω or 3ω for Amplitude, Phase, Re or Im.'
+      : 'Complex nodal phasors are averaged per cell before Amplitude, Phase, Re or Im is calculated. Peak convention: u(t) = DC + Re(U exp(inωt)); Im multiplies −sin(nωt).';
     const nodeField = field === 'temperature' || field === 'voltage',
       isPhase = n && representation === 'phase' && field !== 'J',
       unit = isPhase ? '°' : field === 'temperature' ? 'K' : field === 'voltage' ? 'V' : ['qx', 'qy'].includes(field) ? 'W/m²' : 'A/m²';
-    let lo = values.reduce((a, b) => Math.min(a, b), Infinity),
-      hi = values.reduce((a, b) => Math.max(a, b), -Infinity);
-    if (isPhase) {
-      lo = -180;
-      hi = 180;
-    }
-    const phaseMap = isPhase ? TE.phaseMap(r, field, n) : null;
+    const lo = isPhase ? -180 : Math.min(...values), hi = isPhase ? 180 : Math.max(...values);
+    const phaseMap = isPhase ? map : null;
     const f = app.canvasFrame('resultCanvas', c);
     app.resultFrame = f;
     const {
@@ -170,13 +168,7 @@
     } = f;
     for (let j = 0; j < c.ny; j++) for (let i = 0; i < c.nx; i++) {
       const idx = j * c.nx + i;
-      let v = values[idx];
-      if (nodeField) {
-        const a = j * (c.nx + 1) + i;
-        const ids = [a, a + 1, a + c.nx + 1, a + c.nx + 2];
-        if (!isPhase) v = ids.reduce((s, id) => s + values[id], 0) / 4;
-      }
-      if (isPhase) v = phaseMap.values[idx];
+      const v = values[idx];
       ctx.fillStyle = v === null ? '#56616d' : app.color(hi === lo ? .5 : (v - lo) / (hi - lo));
       ctx.fillRect(left + i * w / c.nx, top + (c.ny - 1 - j) * h / c.ny, w / c.nx + .4, h / c.ny + .4);
     }
@@ -184,6 +176,8 @@
       const vmax = vecX.reduce((s, z, i) => Math.max(s, Math.hypot(z.re, vecY[i].re)), 0),
         stride = Math.max(1, Math.ceil(Math.max(c.nx, c.ny) / 18));
       if (vmax > TE.arrowNoiseFloor(r)) {
+        ctx.save();
+        ctx.shadowColor = '#0b141d'; ctx.shadowBlur = 2;
         ctx.strokeStyle = '#f8fafc';
         ctx.fillStyle = '#f8fafc';
         ctx.lineWidth = 1.15;
@@ -212,6 +206,7 @@
           ctx.closePath();
           ctx.fill();
         }
+        ctx.restore();
       }
     }
     app.contacts(f, c);
@@ -221,13 +216,16 @@
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(left + pi / c.nx * w, top + h - pj / c.ny * h, 5, 0, 2 * Math.PI);
-    ctx.stroke();
+    ctx.strokeStyle = '#142f43'; ctx.lineWidth = 4; ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
     app.$('scaleMin').textContent = TE.formatInputNumber(lo);
     app.$('scaleMax').textContent = TE.formatInputNumber(hi);
     app.$('scaleUnit').textContent = unit;
-    app.$('fieldCaption').textContent = `${app.$('field').selectedOptions[0].text} · ${n ? n + 'ω' : 'DC'}${n ? ' · ' + (field === 'J' ? 'vector amplitude' : representation) : ''} · ${nodeField ? 'nodal values averaged per cell' : 'cell-centered field'}${isPhase ? ` · gray: ${phaseMap.masked} cells at/below ${app.fmt(phaseMap.threshold)} field units` : ''}`;
-    app.$('vectorNote').textContent = 'Arrows: real current phasor at 0° (direction and relative magnitude). White = source electrode; pink = sink. Click to move the probe. Vectors below 1E-8 of the strongest current harmonic (or 1E-12 A/m²) are hidden to avoid magnifying numerical noise.';
+    app.$('fieldCaption').textContent = `${app.$('field').selectedOptions[0].text} · ${n ? n + 'ω' : 'DC'}${n ? ' · ' + (field === 'J' ? 'vector amplitude' : representation) : ''} · ${nodeField ? 'complex phasors averaged per cell' : 'cell-centered field'}${isPhase ? ` · gray: ${phaseMap.masked} cells at/below ${app.fmt(phaseMap.threshold)} field units` : ''}`;
+    app.$('vectorNote').textContent = `Arrows: real current phasor at 0° (direction and relative magnitude). ${globalThis.TETheme && document.documentElement.dataset.theme === 'light' ? 'Dark blue' : 'White'} = source electrode; magenta = sink. Click to move the probe. Vectors below 1E-8 of the strongest current harmonic (or 1E-12 A/m²) are hidden to avoid magnifying numerical noise.`;
     app.$('probeLabel').textContent = `x = ${app.fmt(pi * c.lx / c.nx * 1000)} mm, y = ${app.fmt(pj * c.ly / c.ny * 1000)} mm`;
+    app.$('dcProbe').hidden = periodic;
+    app.$('dcProbe').textContent = periodic ? '' : `Probe: x = ${app.fmt(r.mesh.x[app.probe] * 1000)} mm, y = ${app.fmt(r.mesh.y[app.probe] * 1000)} mm · T = ${TE.formatInputNumber(r.temperature[app.probe])} K · V = ${TE.formatInputNumber(r.voltage[app.probe])} V`;
     app.$('timeCharts').hidden = !periodic;
     if (periodic) {
       const thermal = TE.historyForPlot(r, r.temperature.map(T => T[app.probe])),
@@ -268,6 +266,6 @@
     app.$('surfaceMin').textContent = TE.formatInputNumber(lo);
     app.$('surfaceMax').textContent = TE.formatInputNumber(hi);
     app.$('surfaceUnit').textContent = surface.unit;
-    app.$('profileCaption').textContent = (periodic ? `t = ${app.fmt(r.time[sample] * 1000)} ms · phase ${app.fmt(360 * r.frequency * r.time[sample])}° · sample ${sample + 1}/${r.samples}` : 'DC stationary') + ` · ${surface.nodal ? 'nodal values averaged per cell' : 'cell-centered values'}` + (r.converged ? '' : ' · UNCONVERGED');
+    app.$('profileCaption').textContent = (periodic ? `t = ${app.fmt(r.time[sample] * 1000)} ms · phase ${app.fmt(360 * r.frequency * r.time[sample])}° · sample ${sample + 1}/${r.samples}` : 'DC stationary') + ` · ${surface.nodal ? 'complex phasors averaged per cell' : 'cell-centered values'}` + (r.converged ? '' : ' · UNCONVERGED');
   };
 })(globalThis.TEApp);

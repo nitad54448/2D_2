@@ -32,32 +32,8 @@
       nodal = ['temperature', 'voltage'].includes(key),
       geometry = key === 'materials',
       isPhase = n > 0 && representation === 'phase';
-    let values = [];
-    if (!geometry) {
-      if (key === 'J') {
-        const x = zfield(r, 'Jx', n),
-          y = zfield(r, 'Jy', n);
-        values = x.map((z, i) => Math.hypot(mag(z), mag(y[i])));
-      } else {
-        const z = zfield(r, key, n);
-        values = z.map(z => n ? isPhase ? phase(z) : mag(z) : z.re);
-        if (nodal) values = Array.from({
-          length: c.nx * c.ny
-        }, (_, k) => {
-          const i = k % c.nx,
-            j = Math.floor(k / c.nx),
-            a = j * (c.nx + 1) + i,
-            ids = [a, a + 1, a + c.nx + 1, a + c.nx + 2];
-          if (isPhase) return phase({
-            re: ids.reduce((s, i) => s + z[i].re, 0),
-            im: ids.reduce((s, i) => s + z[i].im, 0)
-          });
-          return ids.reduce((s, i) => s + values[i], 0) / 4;
-        });
-      }
-    }
-    const phaseMap = isPhase ? TE.phaseMap(r, key, n) : null;
-    if (isPhase) values = phaseMap.values;
+    const map = geometry ? {values: []} : TE.harmonicMap(r, key, n, representation);
+    const values = map.values, phaseMap = isPhase ? map : null;
     const lo = isPhase ? -180 : values.reduce((a, v) => Math.min(a, v), Infinity),
       hi = isPhase ? 180 : values.reduce((a, v) => Math.max(a, v), -Infinity);
     let w = 400,
@@ -143,9 +119,9 @@
     html += page('Terminal spectrum and probe', terminal);
     for (const section of TE.equationGuide) html += page(section.title, section.html);
     for (const [key, title, unit, nodal] of fields) {
-      for (const rep of periodic(r) && key !== 'J' ? ['amplitude', 'phase'] : ['amplitude']) {
-        const ns = rep === 'phase' ? [1, 2, 3] : hz;
-        html += page(title + ' · ' + (rep === 'phase' ? 'phase (°)' : unit), `<p>${key === 'J' ? 'Vector norm √(|Jx|² + |Jy|²); not a harmonic of instantaneous |J|.' : nodal ? 'Nodal data averaged per cell; phase uses the mean complex phasor.' : 'Cell-centered field.'} ${rep === 'phase' ? 'Gray cells have amplitude below the shared absolute/relative phase threshold; compare amplitude maps.' : (key === 'J' ? 'DC shows the magnitude of the mean vector.' : 'DC is signed; higher harmonics show peak magnitude.') + ' Each map has its own scale.'}</p><div class="maps">${ns.map(n => `<figure>${add(key + '-' + n + '-' + rep, gridSvg(r, key, n, rep))}<figcaption>${n ? n + 'ω' : 'DC'} · ${rep === 'phase' ? 'degrees' : esc(unit)}</figcaption></figure>`).join('')}</div>`);
+      for (const rep of periodic(r) && key !== 'J' ? ['amplitude', 'phase', 'real', 'imaginary'] : ['amplitude']) {
+        const ns = rep === 'amplitude' ? hz : [1, 2, 3];
+        html += page(title + ' · ' + rep + ' · ' + (rep === 'phase' ? '°' : unit), `<p>${key === 'J' ? 'Vector norm √(|Jx|² + |Jy|²); not a harmonic of instantaneous |J|.' : nodal ? 'Complex nodal phasors are averaged per cell before amplitude, phase, real or imaginary parts are calculated.' : 'Cell-centered field.'} ${rep === 'phase' ? 'Gray cells have amplitude below the shared absolute/relative phase threshold; compare amplitude maps.' : (key === 'J' ? 'DC shows the magnitude of the mean vector.' : 'DC is signed. Harmonics use peak phasors; Re and Im are signed components (Im multiplies −sin(nωt)).') + ' Each map has its own scale.'}</p><div class="maps">${ns.map(n => `<figure>${add(key + '-' + n + '-' + rep, gridSvg(r, key, n, rep))}<figcaption>${n ? n + 'ω' : 'DC'} · ${rep === 'phase' ? 'degrees' : esc(unit)}</figcaption></figure>`).join('')}</div>`);
       }
     }
     const css = `@page{size:A4;margin:13mm}*{box-sizing:border-box}body{font:11px Arial,sans-serif;color:#193242;margin:0;background:#e6ebef}header{font-size:10px;letter-spacing:2px;color:#527184;border-bottom:1px solid #c8d5dd;padding-bottom:8px}h1{font-size:23px;margin:14px 0}p{line-height:1.45}table{border-collapse:collapse;width:100%;table-layout:fixed;margin:10px 0;font-size:9px}th,td{text-align:left;padding:6px 4px;border-bottom:1px solid #d8e0e5;overflow-wrap:anywhere}th{background:#eaf2f5}tr,figure{break-inside:avoid}thead{display:table-header-group}.page{background:white;max-width:190mm;margin:14px auto;padding:10mm;break-after:page}.page:last-child{break-after:auto}.status{font-weight:bold;border-left:4px solid #be6733;padding:8px;background:#fff5e9}.foot{border-top:1px solid #ccc;padding-top:8px;font-size:9px;color:#526777}.maps{display:grid;grid-template-columns:1fr 1fr;gap:10px}figure{margin:0}figcaption{font-size:10px;text-align:center}svg{display:block;width:100%;height:auto}.page>svg{width:125mm;max-width:100%;margin:0 auto}button{padding:12px 18px;margin:12px;font-size:15px}.actions{position:sticky;top:0;background:#fff;box-shadow:0 1px 5px #aaa;text-align:center}@media print{body{background:white}.actions{display:none}.page{max-width:none;margin:0;padding:0}*{print-color-adjust:exact;-webkit-print-color-adjust:exact}}`;

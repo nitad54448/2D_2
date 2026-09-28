@@ -114,6 +114,8 @@
   app.$('exportZip').onclick = app.exportZip;
   app.$('exportResults').onclick = app.exportResults;
   app.$('exportCsv').onclick = app.exportSpectrum;
+  app.$('importProject').onclick = () => app.$('projectFile').click();
+  app.$('projectFile').onchange = app.importProject;
   app.$('import').onclick = () => app.$('file').click();
   app.$('file').onchange = app.importModel;
   app.$('preset').onchange = app.loadPreset;

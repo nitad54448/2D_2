@@ -11,18 +11,18 @@
     app.palette();
   };
   app.palette = function palette() {
-    app.$('palette').innerHTML = app.config.materials.map((m, i) => `<button class="swatch ${i === app.selected ? 'active' : ''}" data-select="${i}" style="--swatch:${m.color}"><i></i>${app.esc(m.name)}</button>`).join('');
+    app.$('palette').innerHTML = app.config.materials.map((m, i) => `<button class="swatch ${i === app.selected ? 'active' : ''}" data-select="${i}" style="--swatch:${/^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#73d8d0'}"><i></i>${app.esc(m.name)}</button>`).join('');
   };
   app.boundaryForm = function boundaryForm() {
     app.$('electrodes').innerHTML = ['source', 'sink'].map(name => {
       const e = app.config.electrical;
       return `<div class="electrode"><h3>${name.toUpperCase()} ELECTRODE</h3><div class="grid3"><label>Side<select id="${name}Side">${['left', 'right', 'bottom', 'top'].map(side => `<option ${side === e[name + 'Side'] ? 'selected' : ''}>${side}</option>`).join('')}</select></label><label>Range start <span>%</span><input id="${name}Start" type="number" ${app.numberAttrs(100 * e[name + 'Range'][0])} min="0" max="100"></label><label>Range end <span>%</span><input id="${name}End" type="number" ${app.numberAttrs(100 * e[name + 'Range'][1])} min="0" max="100"></label></div></div>`;
     }).join('');
-    app.$('thermalCards').innerHTML = Object.entries(app.config.thermal).map(([side, b]) => `<div class="thermal-card" data-side="${side}"><h3>${side.toUpperCase()}</h3><label>Condition<select data-key="kind">${['temperature', 'flux', 'convection'].map(k => `<option value="${k}" ${b.kind === k ? 'selected' : ''}>${{
+    app.$('thermalCards').innerHTML = ['left', 'right', 'bottom', 'top'].map(side => { const b = app.config.thermal[side]; return `<div class="thermal-card" data-side="${side}"><h3>${side.toUpperCase()}</h3><label>Condition<select data-key="kind">${['temperature', 'flux', 'convection'].map(k => `<option value="${k}" ${b.kind === k ? 'selected' : ''}>${{
       temperature: 'Temperature · K',
       flux: 'Outward total flux · W/m²',
       convection: 'Convection · ambient K'
-    }[k]}</option>`).join('')}</select></label><div class="grid3">${app.input('DC value', 'bias', typeof b.value === 'number' ? b.value : b.value.bias ?? 0)}${app.input('AC peak', 'amplitude', typeof b.value === 'number' ? 0 : b.value.amplitude ?? 0)}${app.input('Phase', 'phase', typeof b.value === 'number' ? 0 : b.value.phase ?? 0, '°')}${app.input('Convection h', 'h', b.h ?? 0)}</div></div>`).join('');
+    }[k]}</option>`).join('')}</select></label><div class="grid3">${app.input('DC value', 'bias', typeof b.value === 'number' ? b.value : b.value.bias ?? 0)}${app.input('AC peak', 'amplitude', typeof b.value === 'number' ? 0 : b.value.amplitude ?? 0)}${app.input('Phase', 'phase', typeof b.value === 'number' ? 0 : b.value.phase ?? 0, '°')}${app.input('Convection h', 'h', b.h ?? 0)}</div></div>`; }).join('');
   };
   app.fill = function fill() {
     app.$('modelNote').textContent = app.config.description ?? '';
@@ -172,7 +172,7 @@
     if (sweep) app.$('solverMethod').textContent = 'Periodic · frequency sweep';
   };
   app.paintAt = function paintAt(e) {
-    if (app.worker || !app.geomFrame) return;
+    if (app.worker || app.importingProject || !app.geomFrame) return;
     const rect = app.$('geometryCanvas').getBoundingClientRect(),
       x = e.clientX - rect.left,
       y = e.clientY - rect.top,
@@ -356,6 +356,7 @@
     try {
       TE.assert(f.size < 2e6, 'Model JSON must be <2 MB.');
       const c = JSON.parse(await f.text());
+      TE.checkEditorModel(c);
       TE.from2DConfig(c);
       if (c.sweep?.enabled) TE.validateSweep(c);
       TE.assert(c.materials.every(m => ['rho', 'Cp', 'k', 'sigma', 'alpha'].every(k => typeof m[k] === 'number')), 'The editor imports scalar reference laws only.');
