@@ -170,7 +170,7 @@ must be preserved.
 
 Stationary mode solves ∂T/∂t = 0. Periodic mode starts at 300 K except for imposed
 initial boundary temperatures, integrates the full nonlinear equations, and
-compares consecutive temperature cycles. Only the last complete cycle is
+compares consecutive temperature cycles and terminal DC/1ω–3ω phasors. Only the last complete cycle is
 retained for analysis; there is no general-purpose startup-history viewer.
 
 ## Numerical method
@@ -199,7 +199,10 @@ remain nodal quantities.
 The electrical solve in current/open-circuit mode combines a zero-terminal-voltage
 Seebeck solution with a unit-voltage conduction solution to enforce total current.
 Dirichlet nodes are eliminated from the linear systems. Matrix-free conjugate
-gradients use diagonal (Jacobi) preconditioning.
+gradients use diagonal (Jacobi) preconditioning. The solver caches free-node and
+edge layouts by mesh and fixed-node set, and reuses typed work buffers.
+Conductances, right-hand sides and fixed values are rebuilt on every solve;
+temperature-dependent coefficients are never reused as if they were constant.
 
 ### Nonlinear and time iteration
 
@@ -220,25 +223,270 @@ integration starts with one backward-Euler step, followed by fixed-step BDF2:
 | Picard relaxation | 0.85 |
 | Periodic absolute tolerance | 2 × 10⁻⁷ K |
 | Periodic relative tolerance | 10⁻¹⁰ |
+| Free-node heat-balance absolute tolerance | 10⁻⁹ W |
+| Free-node heat-balance relative tolerance | 10⁻⁷ |
+| Terminal-voltage harmonic absolute tolerance | 10⁻¹² V |
+| Terminal-current harmonic absolute tolerance | 10⁻¹⁰ A |
+| Terminal-harmonic relative tolerance | 10⁻⁶ |
 | Minimum cycles | 3 in the normal application workflow |
 | Maximum cycle budget | 3–1000; default 100 |
 | GUI samples per period | 64, 128, 256, 512 or 1024; default 128 |
 | Core samples per period | Integer 32–2048 |
 
-Periodic convergence requires the maximum, over all nodes and sampled times, of
+### Algorithm: what happens during a calculation
+
+The solution has three nested levels: a linear solve, a nonlinear thermal solve,
+and (for AC) repetition of complete time cycles. Their stopping criteria are
+separate; a small linear residual alone does not establish periodic convergence.
+
+1. **Build the discrete model.** Assign a material to each rectangular cell,
+   construct its four half-face links and corner heat capacities, and identify
+   the electrical contacts and imposed-temperature nodes.
+2. **Initialize temperature.** Start at 300 K unless the core caller supplies
+   `T0`; apply imposed temperatures at the initial time.
+3. **Update properties at the current temperature guess.** Evaluate conductivity,
+   Seebeck coefficient, thermal conductivity and thermal capacity, then construct
+   the electrical link conductances.
+4. **Solve charge conservation.** Solve the electrical graph equations for V.
+   Voltage control fixes the terminal voltage directly. Current/open-circuit
+   control combines a Seebeck solution at zero terminal voltage with a
+   unit-voltage solution to enforce the requested net terminal current.
+5. **Construct the thermal equation.** Compute link currents, Peltier transport
+   and electrical work. Assemble conduction and boundary terms, including thermal
+   storage in a time-dependent calculation.
+6. **Solve and check the temperature candidate.** Solve the thermal linear system.
+   Compare the candidate with the current guess. When the maximum temperature
+   update is small enough, recompute the coupled balance at the candidate and
+   check its heat residual too. Accept only if both checks pass. Otherwise update
+   the guess with 85% of the candidate correction and repeat steps 3–6, up to
+   100 nonlinear iterations. Fixed-temperature nodes retain their prescribed values.
+7. **Finish DC, or advance AC.** A DC calculation performs that nonlinear solve
+   without a storage term. An AC calculation repeats it at each time step: one
+   backward-Euler startup step, then BDF2 with fixed Δt = 1/(f × samples).
+8. **Check an entire AC cycle.** Compare its temperature history and terminal
+   DC/1ω/2ω/3ω phasors with the preceding cycle. Require both cycle checks and the
+   heat-balance checks to pass, after at least three cycles by default. Otherwise
+   continue until convergence or the maximum-cycle budget.
+9. **Publish the result.** Reconstruct spatial fields and extract their DC–3ω
+   phasors from the retained cycle. A saved checkpoint that has not passed the
+   cycle checks is provisional and is excluded from Bode curves.
+
+The electrical problem is quasistatic at each thermal iteration; there is no
+separate electrical time integrator. Harmonics are extracted from the nonlinear
+time-domain solution, not solved as independently decoupled harmonic equations.
+
+## Understanding the displayed errors
+
+Here, a **normalized error** is a numerical discrepancy divided by its allowed
+tolerance. It is dimensionless. It is **not a percentage** and it is not an
+estimate of the error relative to the exact physical solution.
+
+| Normalized value | Interpretation |
+|---|---|
+| 0 | No difference/residual detected at the available numerical precision |
+| 0.1 | One tenth of the allowed discrepancy |
+| 1 | Exactly at the acceptance threshold |
+| 5 | Five times the allowed discrepancy; this check fails |
+| Pending / unavailable | No comparison is available yet, usually during the first cycle |
+
+An absolute tolerance supplies a floor near zero. A relative tolerance allows
+an additional discrepancy proportional to a specified scale. Unless stated
+otherwise, the reported value is the **maximum**, not an average: a large error
+at one node, time sample or terminal harmonic cannot be hidden by smaller errors
+elsewhere.
+
+### 1. Linear algebra residual: internal CG stopping test
+
+After eliminating fixed-value nodes, each linear system has the form `A x = b`.
+The conjugate-gradient solver stops when:
 
 ```text
-|Tcycle − Tprevious| / [2E−7 + 1E−10 max(|Tcycle|, |Tprevious|)]
+||r||₂ ≤ 2E−12 × max(||b||₂, 1E−20),  where r ≈ b − A x
 ```
 
-to be ≤ 1. This tests successive temperature histories, not every voltage or
-higher-harmonic error independently. Exhausting the cycle budget raises an
-error; any retained complete cycle remains provisional. Tight iteration
-tolerances do not remove mesh or time-discretization errors.
+The implementation uses the residual updated by the CG recurrence; the
+`1E−20` floor is in the corresponding right-hand-side units. Electrical equations
+balance currents, and thermal equations balance powers. The iteration limit is
+4000. This test is internal and is not the UI's “Normalized error”. It measures
+how accurately the current *linearized* equations have been solved.
 
-For stationary results, the reported energy residual is total outward boundary
-heat flow minus absorbed electrical power. Prescribed-temperature boundary heat
-flows are inferred from nodal balances.
+### 2. Nonlinear temperature update: an absolute difference in kelvin
+
+Within Picard iteration, the temperature candidate must satisfy:
+
+```text
+ΔTmax = max_i |Tcandidate,i − Tguess,i| ≤ 2E−9 K
+```
+
+This is the full candidate update, before applying the 0.85 damping factor.
+It is an absolute temperature difference, not a dimensionless normalized value.
+A small update is necessary but is insufficient by itself: the candidate must
+also satisfy the free-node heat-balance test below.
+
+### 3. Heat balance: normalized local residual and residual in watts
+
+For a free temperature node i, define:
+
+```text
+Si       = assembled electrical-work/Peltier source at node i                 [W]
+Bi       = thermal boundary RHS_i − convection_diagonal_i × Ti               [W]
+D_i      = Ci × (Ti − Ttarget,i) / gammaDt                                    [W]
+Fij      = Kij × (Ti − Tj), conductive power outward on incident link i→j    [W]
+Ri       = Si + Bi − D_i − Σ_j Fij                                           [W]
+scale_i  = |Si| + |Bi| + |D_i| + Σ_j |Fij|                                   [W]
+Eheat    = max_free_i |Ri| / [1E−9 W + 1E−7 × scale_i]
+Rheat_W  = max_free_i |Ri|                                                    [W]
+```
+
+Ci is the nodal heat capacity in J/K. In DC, `D_i = 0`. For the first
+backward-Euler step, `Ttarget = Told` and `gammaDt = Δt`. For BDF2,
+`Ttarget = (4Told − Tolder)/3` and `gammaDt = 2Δt/3`. Link orientation in the
+formula is outward from the node being checked.
+
+All terms are recomputed at the candidate temperature. The source `Si` is the
+assembled signed nodal source; the code takes its absolute value **after**
+assembly, not the sum of absolute individual Peltier/work contributions.
+Similarly, `Bi` is the net boundary term. Each incident conductive link enters
+the scale separately through its absolute power.
+
+Prescribed-temperature nodes are excluded: the heat needed to maintain their
+specified temperature is a boundary reaction, not an equation that should have
+zero free-node residual. With no free temperature nodes, both maxima are zero.
+
+The nonlinear solution requires `Eheat ≤ 1`. In a periodic result, the displayed
+heat values are the maxima over the accepted steps in that cycle. The node/step
+with the largest residual in watts need not have the largest normalized residual.
+In a steady result, they describe the accepted stationary solution.
+
+**Example:** if a node has `scale_i = 0.01 W`, its allowed residual is
+`1E−9 + 1E−7 × 0.01 = 2E−9 W`. A residual of `1E−9 W` gives `Eheat = 0.5`
+at that node and passes.
+
+### 4. Temperature-cycle error: is the thermal waveform repeating?
+
+Compare temperatures at matching nodes i and time samples j in consecutive
+cycles k and k−1:
+
+```text
+ET = max_i,j |Tk,i,j − Tk−1,i,j| /
+     [2E−7 K + 1E−10 × max(|Tk,i,j|, |Tk−1,i,j|)]
+```
+
+The scale uses absolute temperature, not the AC temperature amplitude. This is
+stored as `diagnostics.temperatureCycleError`. It is only available once two
+complete histories exist.
+
+**Example:** near 300 K, the denominator is approximately `2.3E−7 K`.
+A cycle-to-cycle temperature change of `1E−7 K` gives `ET ≈ 0.435`, which passes.
+A value of `0.435` does not mean a 43.5% temperature error.
+
+### 5. Terminal-harmonic error: are terminal amplitudes and phases repeating?
+
+Let Un be a complex peak phasor of terminal voltage or terminal current. For each
+quantity and each order n = 0, 1, 2, 3:
+
+```text
+difference = sqrt[(Re Un,k − Re Un,k−1)² + (Im Un,k − Im Un,k−1)²]
+En = difference / [atol + 1E−6 × max(|Un,k|, |Un,k−1|)]
+EH = maximum En over both terminal quantities and all four orders
+
+atol = 1E−12 V for terminal voltage
+atol = 1E−10 A for terminal current
+```
+
+The complex difference detects changes in both amplitude and phase. Each order
+is scaled by its own amplitude; a strong fundamental cannot conceal a changing
+weak 3ω component. Voltage and current are normalized separately before taking
+the maximum. This is stored as `diagnostics.terminalHarmonicError`.
+
+**Example:** a 3ω voltage of about `1E−6 V` has a denominator of about
+`1E−12 + 1E−6 × 1E−6 = 2E−12 V`. A complex cycle-to-cycle change of
+`1E−12 V` gives `En ≈ 0.5`, which passes. Signals comparable to or below the
+absolute floor do not gain relative-accuracy certification from passing this test.
+
+### 6. Combined “Normalized error”: the periodic acceptance test
+
+```text
+Ecombined = max(ET, EH, Eheat)
+```
+
+The result stores this as `periodicError`. Periodic convergence requires
+`Ecombined ≤ 1` and at least three completed cycles in the normal application
+workflow. Every time step must already have passed the nonlinear update and
+heat-balance checks.
+
+For example, `ET = 0.43`, `EH = 0.5`, `Eheat = 0.8` produces a displayed
+combined error of `0.8`, and passes. If `EH = 3`, the combined error is at least
+3 and the calculation continues even when the temperature waveform has settled.
+
+During a cycle, the progress line carries the most recent **completed-cycle**
+comparison. It updates at cycle boundaries; it is not a fresh comparison at every
+time step. The first cycle has no preceding history and is reported as pending.
+Saved provisional cycles can have a pending or failing combined error. Reaching
+the cycle budget does not turn them into converged results.
+
+### 7. Steady energy residual: global balance, not a normalized error
+
+```text
+energyResidual = total outward boundary heat flow − absorbed electrical power   [W]
+absorbed electrical power = −Iterminal × Vterminal                              [W]
+```
+
+This is a signed global diagnostic in watts. Positive means the computed net
+outward heat flow exceeds absorbed electrical power; negative means the reverse.
+It should be close to zero. It is reported after the solve; the implementation
+does not impose a separate global-energy acceptance threshold. Local normalized
+heat balance and the nonlinear temperature update are the stationary stopping
+criteria. Global cancellation can make this diagnostic small even when individual
+local residuals are larger, so inspect both.
+
+### Where to find each quantity
+
+| Results label / purpose | Stored field | Units | Acceptance |
+|---|---|---|---|
+| Normalized error (periodic) | `periodicError` | Dimensionless | ≤ 1, after minimum cycles |
+| Cycle errors: temperature | `diagnostics.temperatureCycleError` | Dimensionless | ≤ 1 |
+| Cycle errors: terminal harmonics | `diagnostics.terminalHarmonicError` | Dimensionless | ≤ 1 |
+| Heat balance: normalized residual | `diagnostics.heatResidualNormalized` | Dimensionless | ≤ 1 |
+| Maximum free-node residual | `diagnostics.heatResidualWatts` | W | Interpreted through the local normalized test |
+| Energy residual (steady) | `energyResidual` | W | Reported diagnostic, no separate global threshold |
+| Nonlinear temperature update (steady JSON) | `diagnostics.updateKelvin` | K | ≤ 2E−9 K by default |
+
+The tolerances above are application defaults. The editor exposes mesh size,
+frequency, samples and cycle budget, not the detailed tolerances. Source-level
+callers can set the supported options on `graphSolve`, `solveSteady` and
+`solvePeriodic`; exported periodic diagnostics record the terminal-harmonic
+tolerances used.
+
+### What to do when a check does not pass
+
+- **Linear or nonlinear solve fails:** check units, material-law positivity,
+  contacts and thermal anchoring. Reduce extreme excitation; for periodic runs,
+  increase samples per period to reduce the time step.
+- **Temperature-cycle error remains above 1:** the thermal startup transient may
+  not have decayed. Increase the cycle budget and check that cooling permits a
+  periodic state. A thermally isolated device with net positive mean heating
+  cannot settle to a periodic temperature.
+- **Terminal-harmonic error remains above 1:** allow more cycles and inspect the
+  weak harmonics. Refine time sampling and mesh resolution; do not interpret a
+  stable temperature plot as proof that a tiny 3ω voltage is resolved.
+- **Heat-balance error remains above 1:** the candidate does not satisfy the local
+  nonlinear thermal equations at the required tolerance. Check material laws,
+  excitation and time-step resolution; a small temperature update alone is not
+  sufficient.
+
+Passing these tests establishes numerical consistency and repeatability for the
+chosen discrete model. It does **not** estimate mesh error, time-discretization
+error, material uncertainty or agreement with experiment. Verify mesh/time
+refinement separately, especially for weak higher harmonics.
+
+### Bode normalization is a different operation
+
+Bode amplitude normalization divides an output amplitude by the reference
+fundamental amplitude, or its nth power. It changes the plotted quantity and
+its units; it is not a convergence error. A missing normalized Bode value can
+mean a zero/weak reference or an unconverged point, as explained in the Bode
+section. A dB value is also a display ratio, not the solver's normalized error.
 
 ## Harmonics and visualization
 
@@ -273,8 +521,22 @@ time samples directly, including all temporally resolved components.
 
 Clicking the harmonic map selects a nodal temperature probe. Periodic charts
 show probe temperature and terminal voltage; only converged histories are closed
-back to their first sample on screen. Phase maps do not apply the Bode amplitude
-threshold, so phase near zero amplitude should not be interpreted.
+back to their first sample on screen. Interactive and exported phase maps share a masking rule. A cell is gray when
+the magnitude of its complex phasor is at or below the larger of the absolute
+floor below and 1E−6 times the largest nodal/cell amplitude of the selected field
+and harmonic. For nodal fields, the cell phasor is averaged before applying the
+mask, so cancellation is handled correctly. The threshold and masked-cell count
+are shown in the interface; exported figures label the threshold.
+
+| Phase-map field | Absolute amplitude floor |
+|---|---|
+| Temperature | 1E−7 K |
+| Potential | 1E−12 V |
+| Jx/Jy | 1E−9 A/m² |
+| qx/qy | 1E−9 W/m² |
+
+These are display thresholds, not error estimates. Raw complex phasors remain
+unchanged in the data exports. The Bode threshold remains separately adjustable.
 
 ## Frequency sweeps and Bode analysis
 
@@ -284,7 +546,7 @@ independently; the previous frequency is not used as a warm start. Biases,
 amplitudes, phases and geometry remain fixed.
 
 A failed point stops the sweep. Stop retains completed points and, when available,
-the latest complete cycle of the interrupted point. Unconverged points are
+the latest saved complete-cycle checkpoint of the interrupted point. Unconverged points are
 excluded from Bode curves but can remain available for inspection/export.
 
 Bode controls provide terminal voltage/current, impedance, or a spatial T/V/J/q
@@ -371,11 +633,12 @@ columns contain absolute magnitudes.
 | Terminal current | Absolute value ≤ 10⁶ A |
 | Jx/Jy and qx/qy | Absolute value ≤ 10¹² in their SI units |
 | Electrical power and checked link work/Peltier terms | Absolute value ≤ 10¹² W |
-| Sweep retained-data estimate | ≤ 256 MiB |
+| Single-frequency/sweep retained-data estimate | ≤ 256 MiB |
 
-The sweep estimate is points × samples × [2 × nodes + 4 × cells] × 32 bytes;
-it is a heuristic, not a hard bound on browser memory. Single-frequency runs
-have no equivalent retained-data estimate check. Harmonic magnitudes are checked
+The estimate is points × samples × [2 × nodes + 4 × cells] × 32 bytes, with
+points = 1 for a single-frequency run. Both single-frequency periodic runs and
+sweeps enforce the 256 MiB estimate before solving. It is a heuristic, not a hard
+bound on total browser memory or export memory. Harmonic magnitudes are checked
 against twice their associated instantaneous field limit. Nonfinite results and
 invalid positive-property laws are rejected; values are not clipped to limits.
 
@@ -393,35 +656,94 @@ melting and material failure. These software limits do not establish physical
 validity. Check material calibration ranges, mesh refinement, time refinement
 and convergence separately.
 
-## Source architecture and review notes
+## Source architecture
 
 | File | Responsibility |
 |---|---|
-| `index.html` | Interface/style, equation text and embedded `workerSource` solver copy |
-| `assets/core.js` | Materials, mesh, validation, transport solvers, harmonics and Bode/data helpers |
-| `assets/app.js` | Editor state, worker orchestration, rendering and user-triggered exports |
-| `assets/exports.js` | Offline reports, CSV/SVG generation and ZIP writer |
+| `index.html` | Interface/style and ordered classic-script loading |
+| `assets/core.js` | Self-contained core factory: materials, mesh, validation, solvers, harmonics, phase masking and Bode helpers |
+| `assets/worker.js` | Offline worker composition, message handling and transferable-buffer encoding/decoding |
+| `assets/ui-state.js` | Shared UI state and formatting/input helpers |
+| `assets/ui-model.js` | Materials, boundaries, mesh editing, import and presets |
+| `assets/ui-plots.js` | Geometry, harmonic maps, instantaneous fields and time charts |
+| `assets/ui-sweep.js` | Sweep selection, Bode controls and curves |
+| `assets/ui-worker.js` | Run/stop lifecycle, result acceptance and diagnostics |
+| `assets/ui-downloads.js` | User-triggered model/result/report/archive exports |
+| `assets/app.js` | UI bootstrap and event bindings |
+| `assets/exports.js` | Report, CSV/SVG and ZIP generation |
 | `assets/startup.js` | Early script-loading and initialization diagnostics |
+| `tests/*.test.cjs` | Dependency-free numerical, worker, export and UI-logic regression tests |
+| `tools/benchmark.cjs` | Repeatable small layered-case timing comparison |
 
-The embedded worker contains a duplicate of the executable core. In the reviewed
-files it matches `core.js` through the Bode helpers, excluding the report equation
-guide and adding the worker message handler. Changes to solver code must be
-synchronized in both places; editing `assets/core.js` alone does not change the
-solver executed by the browser worker.
+There is one solver source. `TE.createCore` builds the page API; `TE.workerSource()`
+serializes the same self-contained factory and the worker handler into a Blob.
+No solver code is embedded in HTML, and no worker-side fetch or `importScripts`
+is required. Classic scripts preserve direct local-file use without ES-module
+fetch requirements. There is no build step or generated solver copy to synchronize.
+Keep the factory self-contained when extending it: worker execution must not
+depend on page-only functions or variables. UI modules expose their operations
+and shared state on `TEApp`; event handlers are bound after all modules load.
 
-Review of the supplied revision found one reproducible phase-conversion edge
-case: `TE.signal2D` reduces phase modulo 360 before conversion, while the Bode
-reference helper converts the unreduced phase. Very large finite phase values
-can therefore give an incorrect or nonfinite Bode reference despite a finite
-solver waveform. For example, a phase of `1e308` degrees passes validation but
-causes the Bode reference to be reported below numerical resolution. Keep
-entered phases within a conventional range such as −180° to 180°. A code fix
-should apply the same modulo conversion in both core copies. This documentation
-update does not patch the JavaScript.
+Waveform generation, corner-waveform validation and Bode references now share
+`TE.phaseRadians`, which reduces degrees modulo 360 before conversion. This fixes
+the large-finite-phase discrepancy in the previous revision.
 
-Verification performed for this revision: syntax checks of all four JavaScript
-files and the embedded worker; analytic Ohmic voltage/Joule temperature checks;
-open-circuit Seebeck voltage; Fourier sign/scale; periodic resistor convergence
-and impedance; embedded-worker steady calculation; report/ZIP generation and ZIP
-CRC verification. These focused checks passed. Full browser interaction testing,
-all-preset coverage and a systematic mesh/time-convergence study were not performed.
+### Checkpoints and transport
+
+Complete-cycle checkpoints are published after the first cycle, every fifth
+cycle, at the final failed cycle budget, or at a cycle boundary after at least
+one second since the previous checkpoint. Whichever condition occurs first
+applies. Final converged results are always published. Core API callers may set
+`checkpointEvery` and `checkpointIntervalMs` on `solvePeriodic`.
+
+Stopping terminates the worker and retains the latest **saved** checkpoint;
+intervening completed cycles may not have been published. The UI labels such
+results provisional. A failure during a cycle similarly preserves only an
+already accepted checkpoint.
+
+Field histories and complex harmonics are flattened into Float64 buffers for
+worker messages and transferred rather than recursively cloned. Wire buffers
+are separate from solver-owned arrays, so sending a checkpoint cannot detach
+the ongoing calculation's state. The main thread reconstructs ordinary arrays
+and `{re, im}` objects, preserving JSON/CSV compatibility. Large-array allocation
+is also reduced in graph iteration, checkpoint packaging and temperature-range
+display. Memory estimates remain necessary because transport and exports still
+create temporary data.
+
+## Developer verification
+
+With Node.js 20 or later, run the included tests from the project directory:
+
+```bash
+node --test tests/*.test.cjs
+node tools/benchmark.cjs
+```
+
+The application itself needs no Node runtime. The benchmark optionally accepts
+the path to an older `core.js` as its first argument. It warms up once, then
+reports five timings and their median for the same 8 × 2 layered case at 2 Hz
+with 64 samples per period.
+
+The 32 regression tests cover:
+
+- Analytic Ohmic voltage and Joule temperature, voltage control, Seebeck voltage
+  with a temperature-dependent coefficient, and energy balance.
+- Peltier current reversal at two interfaces, Thomson coupling, partial contacts,
+  thermal AC and nonlinear 3ω voltage.
+- Fourier sign/scale, large phases, convergence diagnostics and mesh/time refinement.
+- Memory limits, graph-cache invalidation, checkpoint cadence and invalid inputs.
+- The generated worker's steady/periodic/sweep/error paths, transferred data and
+  provisional checkpoints, using a Node worker-thread adapter.
+- Shared phase masking, finite report figures, export JSON/CSV and ZIP CRCs.
+- Modular UI bootstrap/handlers, all six presets, result diagnostics, dirty-state
+  exports and imports, using DOM stubs for logic-level checks.
+
+In the measured small layered benchmark, the median fell from about 965 ms to
+382 ms (approximately 2.5× faster). Both versions completed five cycles and
+returned identical terminal fundamental values in that comparison. This is one
+case on one runtime, not a general performance guarantee.
+
+Visual/browser interaction testing remains outstanding: the available browser
+security policy blocked opening local project files. The Node worker tests and
+DOM-stub tests do not validate browser layout, native downloads, popup behavior
+or direct `file://` execution. See `CHANGELOG.md` for the change summary.

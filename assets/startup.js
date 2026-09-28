@@ -17,4 +17,4 @@
   window.addEventListener('load', function () {
     if (!window.TE_APP_READY && document.getElementById('startupError').hidden) show('The application did not initialize. Keep index.html and assets together.');
   });
-}());
+})();
