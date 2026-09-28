@@ -215,6 +215,17 @@ button.text-button {
 button.secondary {
   margin-top:20px;
 }
+select.preset-select {
+  width:auto;
+  margin-top:20px;
+  padding:10px 14px;
+  font-size:11px;
+  background:var(--button-bg);
+  cursor:pointer;
+}
+select.preset-select:hover {
+  background:var(--button-hover);
+}
 input:focus,select:focus,button:focus-visible,summary:focus-visible {
   outline:2px solid var(--teal);
   outline-offset:2px;
@@ -378,6 +389,12 @@ label>span {
   font-size:10px;
   color:var(--muted);
 }
+.settings > label {
+  margin-top:16px;
+}
+.settings > label:first-child {
+  margin-top:0;
+}
 .grid2 {
   display:grid;
   grid-template-columns:1fr 1fr;
@@ -430,9 +447,23 @@ label>span {
 .material-card .name-row {
   display:flex;
   gap:12px;
+  align-items:flex-end;
 }
 .material-card .name-row label:first-child {
   flex:1;
+}
+.remove-material {
+  background:none;
+  border:1px solid var(--control-border);
+  color:var(--muted);
+  padding:9px 12px;
+  margin-bottom:0;
+  font-size:12px;
+}
+.remove-material:hover:not(:disabled) {
+  background:var(--error-bg);
+  color:var(--error-text);
+  border-color:var(--error-border);
 }
 .material-card input[type=color] {
   height:36px;
@@ -489,7 +520,7 @@ label>span {
 }
 .field-controls {
   display:flex;
-  align-items:center;
+  align-items:flex-end;
   gap:9px;
   flex-wrap:wrap;
 }
@@ -498,15 +529,22 @@ label>span {
   font-size:11px;
   margin:0;
 }
+.field-controls button {
+  padding:9px 14px;
+}
 .check {
   display:flex;
   align-items:center;
   gap:7px;
   font-size:10px;
+  align-self:center;
 }
 .check input {
   width:auto;
   margin:0;
+}
+#profileTimeControls {
+  margin-top:18px;
 }
 .result-box {
   height:450px;

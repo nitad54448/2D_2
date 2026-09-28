@@ -42,21 +42,57 @@
     app.$('runProgress').hidden = true;
     app.$('elapsed').textContent = ((performance.now() - app.started) / 1000).toFixed(1) + ' s';
   };
+  // A displayed result must always belong to the current model. Anything else is cleared.
+  app.sameModel = r => Boolean(r?.config) && JSON.stringify(r.config) === JSON.stringify(app.config);
+  app.clearResults = function clearResults(message = 'Your 2D response will appear here.') {
+    app.result = null;
+    app.sweepResult = null;
+    app.probe = 0;
+    app.$('bodeCard').hidden = true;
+    app.$('sweepPoint').innerHTML = '';
+    for (const id of ['exportMenuButton', 'exportPdf', 'exportZip', 'exportResults', 'exportCsv', 'exportProfile', 'bodeCsv']) app.$(id).disabled = true;
+    app.$('exportMenu').hidden = true;
+    app.$('exportMenuButton').setAttribute('aria-expanded', 'false');
+    app.$('exportStatus').textContent = '';
+    app.$('resultEmpty').textContent = message;
+    app.$('resultEmpty').hidden = false;
+    app.$('vLabel').textContent = 'TERMINAL VOLTAGE';
+    for (const id of ['vMetric', 'tMetric', 'cycleMetric', 'scaleMin', 'scaleMax', 'surfaceMin', 'surfaceMax']) app.$(id).textContent = '—';
+    for (const id of ['vPhase', 'diagnosticsNote', 'scaleUnit', 'surfaceUnit', 'probeChart', 'voltageChart', 'dcProbe']) app.$(id).textContent = '';
+    app.$('errorMetric').textContent = 'No valid result';
+    app.$('fieldCaption').textContent = 'No valid result for the current model.';
+    app.$('profileCaption').textContent = 'No valid result for the current model.';
+    app.$('dcProbe').hidden = true;
+    app.$('spectrum').innerHTML = '<tr><td colspan="6">No computed result.</td></tr>';
+    for (const id of ['resultCanvas', 'profileCanvas']) {
+      const canvas = app.$(id);
+      canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    }
+  };
   app.retainResults = function retainResults(reason) {
     if (app.activeSweep) {
       app.finishSweep(reason);
       return;
     }
+    let text;
     if (app.checkpoint) {
+      // Saved complete cycle of THIS run: shown, but explicitly provisional.
       app.sweepResult = null;
       app.$('bodeCard').hidden = true;
       app.accept(app.checkpoint);
       app.$('badge').textContent = 'STOPPED · UNCONVERGED';
-    } else if (app.result) {
+      text = ' Showing the latest saved complete cycle of this run; harmonics are provisional.';
+    } else if (app.result && !app.sweepResult && app.sameModel(app.result)) {
+      // Previous result of the identical model is still valid.
       app.accept(app.result);
       app.$('badge').textContent = 'PREVIOUS RESULT';
-    } else app.$('badge').textContent = 'STOPPED';
-    app.$('status').textContent = reason + (app.checkpoint ? ' Showing the latest saved complete cycle; harmonics are provisional.' : app.result ? ' Previous results retained.' : ' No complete cycle is available yet.');
+      text = ' The displayed result was computed earlier for this identical model.';
+    } else {
+      app.clearResults('No result: the last run failed or was stopped. ' + reason);
+      app.$('badge').textContent = 'STOPPED';
+      text = ' No result is displayed; earlier results belonged to a different model and were cleared.';
+    }
+    app.$('status').textContent = reason + text;
   };
   app.lock = function lock(value) {
     document.querySelectorAll('.settings').forEach(e => e.disabled = value);
@@ -109,6 +145,7 @@
       app.lock(false);
       app.retainResults(message);
       app.$('badge').textContent = 'ERROR';
+      app.$('badge').className = 'error';
     };
     try {
       const url = URL.createObjectURL(new Blob([TE.workerSource()], {

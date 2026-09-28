@@ -7,8 +7,10 @@
     return `<label>${label}<span>${unit}</span><input data-key="${key}" type="number" step="any" required ${['rho', 'Cp', 'k', 'sigma', 'h'].includes(key) ? 'min="0"' : ''} ${app.numberAttrs(value)}></label>`;
   };
   app.materialsForm = function materialsForm() {
-    app.$('materialCards').innerHTML = app.config.materials.map((m, i) => `<div class="material-card" data-material="${i}" style="--material-color:${/^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#73d8d0'}"><div class="name-row"><label>Material ${i + 1}<input data-key="name" value="${app.esc(m.name)}"></label><label>Color<input type="color" data-key="color" value="${app.esc(m.color)}"></label></div><div class="grid2">${app.input('Density', 'rho', m.rho, 'kg/m³')}${app.input('Heat capacity', 'Cp', m.Cp, 'J/kg K')}${app.input('Thermal conductivity', 'k', m.k, 'W/m K')}${app.input('Electrical conductivity', 'sigma', m.sigma, 'S/m')}${app.input('Resistivity slope β', 'beta', m.beta ?? 0, '1/K')}${app.input('Seebeck α₃₀₀', 'alpha', m.alpha * 1e6, 'µV/K')}${app.input('Seebeck slope α′', 'alphaSlope', (m.alphaSlope ?? 0) * 1e6, 'µV/K²')}</div></div>`).join('');
+    const canRemove = app.config.materials.length > 1;
+    app.$('materialCards').innerHTML = app.config.materials.map((m, i) => `<div class="material-card" data-material="${i}" style="--material-color:${/^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#73d8d0'}"><div class="name-row"><label>Material ${i + 1}<input data-key="name" value="${app.esc(m.name)}"></label><label>Color<input type="color" data-key="color" value="${app.esc(m.color)}"></label><button type="button" class="remove-material" data-remove="${i}" title="Remove material" ${canRemove ? '' : 'disabled'}>✕</button></div><div class="grid2">${app.input('Density', 'rho', m.rho, 'kg/m³')}${app.input('Heat capacity', 'Cp', m.Cp, 'J/kg K')}${app.input('Thermal conductivity', 'k', m.k, 'W/m K')}${app.input('Electrical conductivity', 'sigma', m.sigma, 'S/m')}${app.input('Resistivity slope β', 'beta', m.beta ?? 0, '1/K')}${app.input('Seebeck α₃₀₀', 'alpha', m.alpha * 1e6, 'µV/K')}${app.input('Seebeck slope α′', 'alphaSlope', (m.alphaSlope ?? 0) * 1e6, 'µV/K²')}</div></div>`).join('');
     app.palette();
+    if (app.updateMaterialCap) app.updateMaterialCap();
   };
   app.palette = function palette() {
     app.$('palette').innerHTML = app.config.materials.map((m, i) => `<button class="swatch ${i === app.selected ? 'active' : ''}" data-select="${i}" style="--swatch:${/^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#73d8d0'}"><i></i>${app.esc(m.name)}</button>`).join('');
@@ -327,6 +329,32 @@
     app.config.materialMap.fill(app.selected);
     app.drawGeometry();
     app.dirty();
+  };
+  app.updateMaterialCap = () => {
+    const atLimit = app.config.materials.length >= 12;
+    if (app.$('addMaterial')) app.$('addMaterial').disabled = atLimit;
+    if (app.$('presetMaterial')) app.$('presetMaterial').disabled = atLimit;
+    if (app.$('materialFilesButton')) app.$('materialFilesButton').disabled = atLimit;
+  };
+  app.removeMaterial = (index) => {
+    if (app.config.materials.length <= 1) return;
+    try {
+      app.config = app.read();
+      app.config.materials.splice(index, 1);
+      for (let k = 0; k < app.config.materialMap.length; k++) {
+        const m = app.config.materialMap[k];
+        if (m === index) app.config.materialMap[k] = 0;
+        else if (m > index) app.config.materialMap[k] = m - 1;
+      }
+      if (app.selected === index) app.selected = 0;
+      else if (app.selected > index) app.selected--;
+      app.materialsForm();
+      app.drawGeometry();
+      app.dirty();
+      app.validateUI();
+    } catch (e) {
+      app.notice(e.message, true);
+    }
   };
   app.addMaterial = () => {
     try {

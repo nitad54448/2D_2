@@ -72,6 +72,32 @@
   app.$('addMaterial').onclick = app.addMaterial;
   app.$('materialFilesButton').onclick = () => app.$('materialFiles').click();
   app.$('materialFiles').onchange = app.importMaterialJson;
+  app.$('presetMaterial').onchange = async () => {
+    const select = app.$('presetMaterial');
+    const file = select.value;
+    if (!file) return;
+    try {
+      TE.assert(!app.worker && !app.importingProject, 'Wait until the current operation finishes.');
+      app.config = app.read();
+      TE.assert(app.config.materials.length < 12, 'Maximum 12 materials.');
+      const res = await fetch('lib/' + file);
+      if (!res.ok) throw new Error('Could not load preset.');
+      const material = app.parseMaterialJson(await res.text());
+      app.config.materials.push(material);
+      app.materialsForm();
+      app.drawGeometry();
+      app.dirty();
+      app.validateUI();
+    } catch (e) {
+      app.notice(e.message, true);
+    } finally {
+      select.value = '';
+    }
+  };
+  app.$('materials').addEventListener('click', e => {
+    const btn = e.target.closest('.remove-material');
+    if (btn) app.removeMaterial(Number(btn.dataset.remove));
+  });
   app.$('resultCanvas').onclick = e => {
     if (!app.result || !app.resultFrame) return;
     const r = app.$('resultCanvas').getBoundingClientRect(),
@@ -94,7 +120,7 @@
   // Sweep selections always refer to the saved computed model.
 
   app.$('sweepPoint').onchange = () => app.selectSweepPoint(Number(app.$('sweepPoint').value));
-  for (const id of ['bodeQuantity', 'bodeHarmonic', 'bodeReference', 'bodeNormalization', 'bodeScale', 'bodeDb', 'bodeX', 'bodeY', 'bodeFloor', 'bodeUnwrap']) app.$(id).addEventListener('input', app.drawBode);
+  for (const id of ['bodeQuantity', 'bodeHarmonic', 'bodeRepresentation', 'bodeReference', 'bodeNormalization', 'bodeScale', 'bodeDb', 'bodeX', 'bodeY', 'bodeFloor', 'bodeUnwrap']) app.$(id).addEventListener('input', app.drawBode);
   for (const id of ['bodeMagnitude', 'bodePhase']) app.$(id).onclick = e => {
     const node = e.target.closest('[data-bode-point]');
     if (node) app.selectSweepPoint(Number(node.dataset.bodePoint));
@@ -163,6 +189,24 @@
       app.drawBode();
     }, 120);
   });
+
+  const initPresets = async () => {
+    const fallback = ["Aluminum.json", "Bi2Te3.json", "Bi2Te3_n_type.json", "Copper.json", "Gold.json", "PbTe.json", "Platinum.json"];
+    let files = fallback;
+    try {
+      const res = await fetch('lib/index.json');
+      if (res.ok) files = (await res.json()).files || fallback;
+    } catch {}
+    const select = app.$('presetMaterial');
+    if (select) {
+      select.innerHTML += files.map(f => {
+        const name = f.replace('.json', '').replace(/_/g, ' ');
+        return `<option value="${app.esc(f)}">${app.esc(name)}</option>`;
+      }).join('');
+    }
+  };
+  initPresets();
+
   app.fill();
   globalThis.TE_APP_READY = true;
 })(globalThis.TEApp);

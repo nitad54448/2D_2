@@ -38,10 +38,9 @@
       app.$('sweepPoint').value = String(saved.results.length - 1);
       app.accept(saved.results.at(-1));
       app.drawBode();
-    } else if (app.result) {
-      app.accept(app.result);
-      app.refreshSweepPoints();
-      app.drawBode();
+    } else {
+      // No point of this sweep was computed: never fall back to an older result.
+      app.clearResults('No result: the sweep stopped before its first frequency point. ' + message);
     }
     app.$('badge').textContent = complete ? 'SWEEP COMPLETE' : 'SWEEP STOPPED';
     app.$('status').textContent = message + ` ${saved.results.filter(r => r.converged).length}/${saved.frequencies.length} converged frequency points retained.`;
@@ -140,8 +139,40 @@
         db,
         dbReference
       };
-      app.$('bodeMagnitude').innerHTML = app.bodeSvg(rows, 'magnitude', opts);
-      app.$('bodePhase').innerHTML = app.bodeSvg(rows, 'phase', opts);
+      
+      const rep = app.$('bodeRepresentation')?.value || 'polar';
+      if (rep === 'complex') {
+        const complexRows = rows.map(r => {
+          if (r.magnitude === null || r.phase === null) return { ...r, real: null, imag: null };
+          const rad = r.phase * Math.PI / 180;
+          return { ...r, real: r.magnitude * Math.cos(rad), imag: r.magnitude * Math.sin(rad) };
+        });
+        
+        // Re-use bodeSvg but override the title handling for Real/Imaginary.
+        // To avoid modifying bodeSvg signatures, we'll manually replace the generic Magnitude/Phase SVG titles.
+        let realSvg = app.bodeSvg(complexRows, 'magnitude', opts);
+        let imagSvg = app.bodeSvg(complexRows, 'magnitude', opts);
+        
+        // Since bodeSvg uses 'magnitude' strictly to read the `.magnitude` key, we need to map our real/imag fields 
+        // to `.magnitude` temporarily just for the plotter.
+        const plotReal = complexRows.map(r => ({ ...r, magnitude: r.real }));
+        const plotImag = complexRows.map(r => ({ ...r, magnitude: r.imag }));
+        
+        realSvg = app.bodeSvg(plotReal, 'magnitude', { ...opts, db: false })
+                     .replace(/Magnitude ·/g, 'Real part ·')
+                     .replace(/Magnitude · dB/g, 'Real part · dB');
+        imagSvg = app.bodeSvg(plotImag, 'magnitude', { ...opts, db: false })
+                     .replace(/Magnitude ·/g, 'Imaginary part ·')
+                     .replace(/Magnitude · dB/g, 'Imaginary part · dB');
+                     
+        app.$('bodeMagnitude').innerHTML = realSvg;
+        app.$('bodePhase').innerHTML = imagSvg;
+        
+      } else {
+        app.$('bodeMagnitude').innerHTML = app.bodeSvg(rows, 'magnitude', opts);
+        app.$('bodePhase').innerHTML = app.bodeSvg(rows, 'phase', opts);
+      }
+
       const reasons = [...new Set(rows.map(r => r.reason).filter(Boolean))];
       app.$('bodeNote').textContent = `${spatial ? `Probe snaps to ${['temperature', 'voltage'].includes(app.$('bodeQuantity').value) ? 'node' : 'cell'} ${rows[0].nodeOrCell}: x=${app.fmt(rows[0].x_m * 1000)} mm, y=${app.fmt(rows[0].y_m * 1000)} mm. ` : ''}${reasons.join(' ')} Phase threshold applies to raw output amplitude; tiny harmonics need convergence checks.`;
       app.$('bodeCsv').disabled = Boolean(app.worker);

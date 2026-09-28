@@ -396,9 +396,13 @@
           z[i] = r[i] / D[i];
           p[i] = z[i];
         }
+        // Jacobi-weighted residual norm √(rᵀD⁻¹r) = √(r·z). The unweighted norm is dominated by
+        // high-conductance rows (Cu) and stopped before low-conductance regions were resolved.
+        let bDb = 0;
+        for (let i = 0; i < nf; i++) bDb += b[i] * b[i] / D[i];
         let rz = dot(r, z),
-          norm = Math.sqrt(dot(r, r));
-        const target = rtol * Math.max(Math.sqrt(dot(b, b)), 1e-20);
+          norm = Math.sqrt(Math.max(rz, 0));
+        const target = rtol * Math.max(Math.sqrt(bDb), 1e-300);
         TE.assert(Number.isFinite(target) && Number.isFinite(norm) && Number.isFinite(rz), 'Linear system exceeds the finite numerical range.');
         let iteration = 0;
         while (norm > target && iteration++ < maxIter) {
@@ -415,7 +419,7 @@
             beta = next / rz;
           for (let i = 0; i < nf; i++) p[i] = z[i] + beta * p[i];
           rz = next;
-          norm = Math.sqrt(dot(r, r));
+          norm = Math.sqrt(Math.max(rz, 0));
         }
         TE.assert(norm <= target && x.every(Number.isFinite), 'Sparse linear solver did not converge to a finite result.');
         free.forEach((node, i) => out[node] = x[i]);
@@ -524,28 +528,36 @@
             rhs[l.a] += s;
             rhs[l.b] -= s;
           });
-          const current = (V, seebeck = true) => m.links.map((l, k) => g[k] * (V[l.a] - V[l.b] - (seebeck ? p[k].alpha * (T[l.b] - T[l.a]) : 0)));
-          const terminal = I => m.links.reduce((s, l, k) => s + I[k] * ((this.sourceSet.has(l.a) ? 1 : 0) - (this.sourceSet.has(l.b) ? 1 : 0)), 0);
-          let V, terminalVoltage;
-          if (e.kind === 'voltage') {
-            terminalVoltage = TE.signal2D(e.value, t, this.frequency);
-            this.sink.forEach(i => fixed.set(i, terminalVoltage));
-            V = TE.graphSolve(m, g, zero, rhs, fixed);
-          } else {
-            const base = TE.graphSolve(m, g, zero, rhs, fixed);
-            this.sink.forEach(i => fixed.set(i, 1));
-            const unit = TE.graphSolve(m, g, zero, zero, fixed),
-              Ibase = terminal(current(base)),
-              Iunit = terminal(current(unit, false));
-            TE.assert(Iunit < 0, 'Electrodes have no conducting connection.');
+          const seebeck = m.links.map((l, k) => p[k].alpha * (T[l.b] - T[l.a]));
+          const current = V => m.links.map((l, k) => g[k] * (V[l.a] - V[l.b] - seebeck[k]));
+          // Superpose V = base + terminalVoltage·unit (base: both electrodes at 0 V with Seebeck
+          // sources; unit: sink at 1 V, no sources). Terminal currents are evaluated by
+          // reciprocity over the whole domain, NOT from potential differences across the
+          // electrode links. Those differences are tiny inside highly conductive contacts (Cu)
+          // and lose all precision when a resistive region sets the current; the link formula
+          // then effectively ignored the resistor. Current entering the source:
+          //   I = -Σ I_k (u_a - u_b)  ⇒  Iunit = -Σ g(Δu)²,  Ibase = Σ g·s·Δu.
+          const base = TE.graphSolve(m, g, zero, rhs, fixed);
+          this.sink.forEach(i => fixed.set(i, 1));
+          const unit = TE.graphSolve(m, g, zero, zero, fixed);
+          let Iunit = 0,
+            Ibase = 0;
+          m.links.forEach((l, k) => {
+            const du = unit[l.a] - unit[l.b];
+            Iunit -= g[k] * du * du;
+            Ibase += g[k] * seebeck[k] * du;
+          });
+          TE.assert(Iunit < 0 && Number.isFinite(Iunit) && Number.isFinite(Ibase), 'Electrodes have no conducting connection.');
+          let terminalVoltage;
+          if (e.kind === 'voltage') terminalVoltage = TE.signal2D(e.value, t, this.frequency);else {
             const target = e.kind === 'open_circuit' ? 0 : TE.signal2D(e.value, t, this.frequency);
             terminalVoltage = (target - Ibase) / Iunit;
-            V = base.map((v, i) => v + terminalVoltage * unit[i]);
           }
+          const V = base.map((v, i) => v + terminalVoltage * unit[i]);
           TE.assert(V.every(Number.isFinite), 'Voltage exceeds the finite numerical range. Check excitation and material values.');
           V.forEach(v => TE.checkRange(v, 'voltage'));
           const I = current(V),
-            terminalCurrent = terminal(I);
+            terminalCurrent = Ibase + terminalVoltage * Iunit;
           TE.checkRange(terminalCurrent, 'current');
           TE.assert(I.every(Number.isFinite) && Number.isFinite(terminalCurrent) && Number.isFinite(terminalVoltage), 'Current or terminal voltage exceeds the finite numerical range.');
           return {
