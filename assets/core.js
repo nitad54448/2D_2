@@ -703,14 +703,17 @@
             bc = this.thermal(t);
           let T = [...initial],
             error = Infinity,
-            stalls = 0;
+            stalls = 0,
+            linearRtol = 2e-12,
+            lastResidual = null;
           for (const [i, v] of bc.fixed) T[i] = v;
           for (let iteration = 0; iteration < maxIterations; iteration++) {
             const b = this.balance(T, t),
               diag = bc.diag.map((v, i) => v + (gammaDt ? b.cap[i] / gammaDt : 0)),
               rhs = b.source.map((v, i) => v + bc.rhs[i] + (gammaDt ? b.cap[i] / gammaDt * target[i] : 0));
             const candidate = TE.graphSolve(m, b.p.map(p => p.k), diag, rhs, bc.fixed, {
-              initial: T
+              initial: T,
+              rtol: linearRtol
             });
             const previousError = error;
             error = Math.max(...candidate.map((v, i) => Math.abs(v - T[i])));
@@ -727,10 +730,15 @@
                 heatResidualNormalized: residual.normalized
               };
               if (residual.normalized <= 1) return candidate;
+              // The update has converged but the heat balance has not. With small time steps the CG
+              // tolerance, relative to capacity × absolute temperature, is looser than the balance
+              // test, and the warm-started solve would return the same state. Tighten it.
+              lastResidual = residual.normalized;
+              linearRtol = Math.max(linearRtol / 100, 1e-16);
             }
             T = candidate.map((v, i) => bc.fixed.has(i) ? v : T[i] + relaxation * (v - T[i]));
           }
-          throw new Error(`Nonlinear thermal iteration failed (update ${error.toExponential(2)} K). Reduce excitation or refine time steps.`);
+          throw new Error(`Nonlinear thermal iteration failed (update ${error.toExponential(2)} K${lastResidual === null ? '' : `, heat-balance residual ${lastResidual.toExponential(2)}`}). Reduce excitation or refine time steps.`);
         }
         snapshot(T, t = 0, steady = false) {
           const m = this.mesh,

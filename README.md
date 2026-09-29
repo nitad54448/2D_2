@@ -120,7 +120,7 @@ Electrical work Iab(Va − Vb) is shared equally between the two nodes. Each cel
 
 **Linear systems.** Matrix-free conjugate gradients with Jacobi preconditioning, relative tolerance 2·10⁻¹² in the Jacobi-weighted residual norm, warm-started from the previous solution.
 
-**Nonlinear coupling.** The electrical and thermal problems are coupled by Picard iteration, undamped first. If an undamped step fails or stops contracting, it is repeated with damping 0.85; after three such fallbacks the run stays damped. A step is accepted when the temperature update is ≤ 2·10⁻⁹ K and the normalized heat-balance residual is ≤ 1.
+**Nonlinear coupling.** The electrical and thermal problems are coupled by Picard iteration, undamped first. If an undamped step fails or stops contracting, it is repeated with damping 0.85; after three such fallbacks the run stays damped. A step is accepted when the temperature update is ≤ 2·10⁻⁹ K and the normalized heat-balance residual is ≤ 1. If the update has converged but the heat balance has not, the next thermal solve uses a 100× tighter conjugate-gradient tolerance. This matters with small time steps, where the linear tolerance, relative to heat capacity × absolute temperature, is looser than the heat-balance test.
 
 **Time integration.** BDF2 after one backward-Euler startup step, with 64 to 1024 steps per period.
 
@@ -175,6 +175,7 @@ Otherwise the run ends at the maximum cycle count (3 to 1000) as unconverged.
 | Nonlinear resistance · 3ω | β = 0.01 K⁻¹ with 0.2 A: the temperature-dependent resistance produces a 3ω voltage. |
 | Open circuit · Seebeck DC | α = 200 µV/K between 300 K and 350 K in open circuit: the Seebeck voltage. |
 | Thermoelectric module · Bi₂Te₃ n/p couple | A single thermoelectric couple as in a Peltier module (below). |
+| RC circuit · thermoelectric impedance spectrum | A thermoelectric element with the impedance of an RC circuit, swept from 0.003 to 30 Hz (below). |
 
 ### Thermoelectric module example
 
@@ -186,6 +187,119 @@ A 2D cut through the middle of one Bi₂Te₃ couple, with a depth of 1.4 mm and
 - as a generator: bottom 350 K, top temperature 300 K, open circuit.
 
 The materials are loaded from `lib/Bi2Te3.json`, `lib/Bi2Te3_n_type.json`, `lib/Copper.json`, `lib/Alumina.json` and `lib/Air.json`. If a file is missing or unsuitable for its role (legs need the right Seebeck sign, copper must conduct, plates and gap must insulate), a built-in copy with the same values is used. The model description states which source was used. A real module repeats this couple; voltage and heat pumping scale with the number of couples.
+
+### RC circuit example: thermoelectric impedance spectrum
+
+The application has no electrical capacitance: charge transport is resistive (∇·J = 0). A thermoelectric element nevertheless has the impedance of an RC circuit, because heat storage acts as a capacitor. This example builds such an element from two library materials, `lib/Bi2Te3.json` and `lib/Copper.json` (with built-in copies as for the module example), and computes its impedance spectrum.
+
+**Structure.** A 1D stack along x (Ny = 1) with a 1 mm × 1 mm cross-section (Ly × depth), meshed with 0.05 mm cells:
+
+| Part | Length | Role |
+|---|---|---|
+| Left end, source electrode | — | Heat sink at 300 K |
+| Bi₂Te₃ layer | L = 0.2 mm (4 cells) | Electrical resistance and thermal resistance |
+| Copper block | Lc = 1 mm (20 cells) | Heat capacity |
+| Right end, sink electrode | — | Insulated (zero total flux) |
+
+The drive is an AC current of 0.1 A peak with no DC bias, swept over 13 logarithmic points from 0.003 to 30 Hz, with 64 steps per period and at most 400 cycles. Loading the example sets the Bode quantity to **Impedance** and the representation to **Real / Imaginary**.
+
+**How the RC arises.** The current I passes through the Bi₂Te₃ layer into the copper.
+
+1. Peltier transport delivers heat α·T0·I to the copper block, where α is the Seebeck coefficient of Bi₂Te₃ and T0 = 300 K.
+2. The copper conducts so well that it stays isothermal, at T0 + θ. It stores heat with capacity C_th and loses it back through the layer to the heat sink, through the thermal resistance R_th = L/(kA).
+3. The temperature difference θ across the layer adds a Seebeck voltage α·θ to the ohmic drop.
+
+The copper's own Seebeck coefficient drops out, for two reasons:
+
+- At the Bi₂Te₃/copper junction the Peltier heat is (α − α_Cu)·T0·I. The insulated end has zero total heat flux, so the heat α_Cu·T0·I carried by the copper's current is deposited there. Together they give α·T0·I.
+- The isothermal copper contributes no Seebeck voltage.
+
+The element therefore behaves as Bi₂Te₃ measured against an α = 0 reference, which is how the application defines terminal voltages.
+
+With θ the temperature rise of the copper, the energy balance and the terminal voltage are
+
+```
+C_th dθ/dt = α T0 I − θ / R_th
+V(source) − V(sink) = R0 I + α θ
+```
+
+For a sinusoidal current, with phasors,
+
+```
+θ = α T0 R_th I / (1 + iωτ)
+
+Z(ω) = R0 + R_TE / (1 + iωτ)
+
+R0   = L/(σA) + Lc/(σ_Cu A)        ohmic resistance
+R_th = L/(kA)                      thermal resistance of the layer
+C_th = ρCp_Cu·Lc·A + ρCp·L·A/3     heat capacity (copper + one third of the layer)
+R_TE = α² T0 R_th                  thermoelectric resistance
+C_TE = C_th / (α² T0)              thermoelectric capacitance
+τ    = R_th C_th = R_TE C_TE       time constant, corner frequency fc = 1/(2πτ)
+```
+
+This is the impedance of a resistor R0 in series with a parallel R_TE ∥ C_TE: the simple RC element of impedance spectroscopy, with the same form as an electrochemical cell without diffusion (series resistance plus charge-transfer resistance in parallel with the double-layer capacitance). The one third of the layer's heat capacity is the first-order correction for heat stored in the layer, whose temperature rises linearly from the heat sink to the junction.
+
+Two limits have a physical meaning:
+
+- **Z(0) = R0 + R_TE**: at low frequency the Seebeck voltage follows the Peltier heating fully.
+- **Z(∞) = R0**: at high frequency the heat capacity holds the temperature constant, so only the ohmic resistance remains.
+
+For the layer alone, R_TE / (L/σA) = α²σT0/k = ZT. Measuring the two limits therefore gives the figure of merit; this is the principle of ZT measurement by impedance spectroscopy and by the Harman method.
+
+**Expected values** with the library properties (Bi₂Te₃: σ = 1.1·10⁵ S/m, k = 1.6 W/(m K), α = 200 µV/K, ρCp = 1.195·10⁶ J/(m³ K); copper: σ = 5.75·10⁷ S/m, ρCp = 3.45·10⁶ J/(m³ K)):
+
+| Quantity | Value |
+|---|---|
+| R0 | 1.836 mΩ (1.818 mΩ layer + 0.017 mΩ copper) |
+| R_th | 125 K/W |
+| R_TE | 1.500 mΩ |
+| ZT of the layer | 0.825 |
+| C_th | 3.53·10⁻³ J/K |
+| C_TE | 294 F |
+| τ | 0.441 s |
+| fc | 0.361 Hz |
+
+The thermoelectric capacitance is huge because it is a thermal capacity divided by the small factor α²T0 = 1.2·10⁻⁵ V²/K.
+
+**Reading the result.**
+
+- **Real / Imaginary** (default):
+  - Re(Z) falls from R0 + R_TE = 3.336 mΩ to R0 = 1.836 mΩ, crossing the midpoint at fc.
+  - −Im(Z) peaks at R_TE/2 = 0.75 mΩ at fc.
+  - Im(Z) is negative: the element is capacitive.
+- **Magnitude / Phase**: |Z| steps down from 3.336 to 1.836 mΩ. The phase has its minimum of about −17° at fc·√(1 + R_TE/R0) ≈ 0.49 Hz.
+- **Export Bode CSV** gives magnitude and phase at every frequency for fitting or for plotting −Im against Re (a semicircle of diameter R_TE starting at R0).
+
+**Simulation versus the formula.** The computed spectrum agrees with Z(ω) within 0.02 % below 0.1 Hz and within 0.5 % at every frequency:
+
+| f (Hz) | Simulated Z (mΩ) | Formula (mΩ) |
+|---|---|---|
+| 0.003 | 3.3355 − 0.0125i | 3.3355 − 0.0125i |
+| 0.030 | 3.3251 − 0.1244i | 3.3253 − 0.1239i |
+| 0.300 | 2.7187 − 0.7340i | 2.7224 − 0.7374i |
+| 3.0 | 1.8658 − 0.1750i | 1.8570 − 0.1778i |
+| 30 | 1.8450 − 0.0188i | 1.8358 − 0.0180i |
+
+The remaining difference at high frequency is physical, not numerical: refining the mesh or the time steps leaves it unchanged. Above a few hertz, heat no longer spreads uniformly: the layer's diffusion time L²/a ≈ 0.03 s and the copper's heat penetration depth approach the frequency scale. A single RC cannot represent this distributed response, which adds a small, slowly decaying tail (the thermal analogue of a Warburg element).
+
+The lumped model is accurate here because the example satisfies its assumptions:
+
+- the copper's diffusion time Lc²/a_Cu ≈ 9 ms is much shorter than τ, so the copper is isothermal;
+- the layer stores only about 7 % as much heat as the copper.
+
+**Linearity.** At 0.1 A the copper temperature swings by at most α·T0·R_th·I = 0.75 K. Joule heating, I²R0 ≈ 18 µW at the current peak, raises the mean temperature by about 1 mK and appears only at DC and 2ω. The 1ω impedance is therefore independent of the amplitude as long as the temperature swing stays small compared with T0.
+
+**Changing the circuit.** Edit the geometry or the Bi₂Te₃ properties; the uniform grid requires lengths that are whole numbers of cells.
+
+| Change | Effect |
+|---|---|
+| Thicker Bi₂Te₃ (L) | R0, R_TE and τ increase in proportion. R_TE/R0 stays near ZT. |
+| Longer copper block (Lc) | C_th, C_TE and τ increase; fc decreases. R0 barely changes. |
+| Larger cross-section (A = Ly × depth) | Every resistance divides by A and C_TE multiplies by A; τ and fc do not change. |
+| Different layer material | R_TE/R0 follows α²σT0/k; τ follows L·Lc·ρCp_Cu/k. |
+
+**Run time and convergence.** Each frequency starts from 300 K and must reach a periodic state. Transients decay with τ, so low frequencies converge in the minimum of 3 cycles, while 30 Hz needs about 120 cycles. The full sweep takes about 10–15 s in a browser. Frequencies well above 30 Hz need proportionally more cycles; raise **Maximum cycles** if points come back unconverged.
 
 ## Material library
 

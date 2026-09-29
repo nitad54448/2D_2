@@ -475,19 +475,21 @@
     fill(pStart, pStart + leg, legBottom, legTop, P);
     return {nx, ny, lx: 5e-3, ly: 3.4e-3, map, contact: [strap / ny, legBottom / ny]};
   };
-  // All five materials come from the material library (the files behind "Select preset…"). The
-  // built-in copies mirror those files and are used only for a file that is missing, invalid, or
-  // unsuitable for its role (legs need the right Seebeck sign; plates and gaps must insulate).
-  app.moduleMaterials = async function moduleMaterials() {
-    const insulating = m => m.sigma < 1e-6,
-      entries = [
-        ['Bi2Te3.json', m => m.alpha > 0, {name: 'Bi2Te3 (p-type benchmark)', rho: 7740, Cp: 154.4, k: 1.6, sigma: 1.1e5, beta: 0, alpha: 2e-4, alphaSlope: 0, color: '#73d8d0'}],
-        ['Bi2Te3_n_type.json', m => m.alpha < 0, {name: 'Bi2Te3 n-type (illustrative)', rho: 7740, Cp: 154.4, k: 1.6, sigma: 1.1e5, beta: 0, alpha: -2e-4, alphaSlope: 0, color: '#ae92d9'}],
-        ['Copper.json', m => m.sigma > 1e6, {name: 'Copper', rho: 8960, Cp: 385, k: 401, sigma: 57478566.4581124, beta: 0.004176967424511028, alpha: 1.83e-6, alphaSlope: 0, color: '#edaf6e'}],
-        ['Alumina.json', insulating, {name: 'Alumina (96% Al2O3)', rho: 3750, Cp: 750, k: 24, sigma: 1e-12, beta: 0, alpha: 0, alphaSlope: 0, color: '#d9d4c7'}],
-        ['Air.json', insulating, {name: 'Air (1 atm, still)', rho: 1.1614, Cp: 1007, k: .0263, sigma: 1e-14, beta: 0, alpha: 0, alphaSlope: 0, color: '#46535f'}]
-      ];
-    const loaded = await Promise.all(entries.map(async ([file, ok, fallback]) => {
+  // Library materials used by the examples (the files behind "Select preset…"). Each entry has a
+  // role check and a built-in copy that mirrors the library file; the copy is used only when the file
+  // is missing, invalid or unsuitable (legs need the right Seebeck sign, copper must conduct, plates
+  // and gaps must insulate).
+  app.libraryCopies = {
+    'Bi2Te3.json': [m => m.alpha > 0, {name: 'Bi2Te3 (p-type benchmark)', rho: 7740, Cp: 154.4, k: 1.6, sigma: 1.1e5, beta: 0, alpha: 2e-4, alphaSlope: 0, color: '#73d8d0'}],
+    'Bi2Te3_n_type.json': [m => m.alpha < 0, {name: 'Bi2Te3 n-type (illustrative)', rho: 7740, Cp: 154.4, k: 1.6, sigma: 1.1e5, beta: 0, alpha: -2e-4, alphaSlope: 0, color: '#ae92d9'}],
+    'Copper.json': [m => m.sigma > 1e6, {name: 'Copper', rho: 8960, Cp: 385, k: 401, sigma: 57478566.4581124, beta: 0.004176967424511028, alpha: 1.83e-6, alphaSlope: 0, color: '#edaf6e'}],
+    'Alumina.json': [m => m.sigma < 1e-6, {name: 'Alumina (96% Al2O3)', rho: 3750, Cp: 750, k: 24, sigma: 1e-12, beta: 0, alpha: 0, alphaSlope: 0, color: '#d9d4c7'}],
+    'Air.json': [m => m.sigma < 1e-6, {name: 'Air (1 atm, still)', rho: 1.1614, Cp: 1007, k: .0263, sigma: 1e-14, beta: 0, alpha: 0, alphaSlope: 0, color: '#46535f'}]
+  };
+  // Returns the materials in the order given and a description of where each came from.
+  app.loadLibraryMaterials = async function loadLibraryMaterials(files) {
+    const loaded = await Promise.all(files.map(async file => {
+      const [ok, fallback] = app.libraryCopies[file];
       try {
         const res = await fetch('lib/' + file);
         if (!res.ok) throw new Error();
@@ -498,14 +500,18 @@
         return {material: {...fallback}, file: null};
       }
     }));
-    const materials = loaded.map(v => v.material), [p, n] = materials;
-    if (p.color.toLowerCase() === n.color.toLowerCase()) n.color = p.color.toLowerCase() === '#ae92d9' ? '#73d8d0' : '#ae92d9';
     const library = loaded.filter(v => v.file).map(v => 'lib/' + v.file),
       builtIn = loaded.filter(v => !v.file).map(v => v.material.name);
     return {
-      materials,
+      materials: loaded.map(v => v.material),
       source: (library.length ? 'from ' + library.join(', ') : '') + (library.length && builtIn.length ? '; ' : '') + (builtIn.length ? 'built-in copies for ' + builtIn.join(', ') : '')
     };
+  };
+  app.moduleMaterials = async function moduleMaterials() {
+    const result = await app.loadLibraryMaterials(['Bi2Te3.json', 'Bi2Te3_n_type.json', 'Copper.json', 'Alumina.json', 'Air.json']),
+      [p, n] = result.materials;
+    if (p.color.toLowerCase() === n.color.toLowerCase()) n.color = p.color.toLowerCase() === '#ae92d9' ? '#73d8d0' : '#ae92d9';
+    return result;
   };
   app.moduleConfig = async function moduleConfig() {
     const {materials, source} = await app.moduleMaterials(),
@@ -532,12 +538,45 @@
       electrical: {kind: 'current', value: {bias: 4, amplitude: 0, phase: 0}, sourceSide: 'left', sinkSide: 'right', sourceRange: [...contact], sinkRange: [...contact]}
     };
   };
+  // RC example: a thermoelectric element whose impedance is a resistor R0 in series with R_TE ∥ C_TE.
+  // 1D stack along x (Ny = 1), cross-section 1 mm × 1 mm, cells of 0.05 mm:
+  // heat sink at 300 K (source) | Bi2Te3 0.2 mm (R0, R_th) | copper 1 mm (heat capacity) | insulated end (sink).
+  app.rcConfig = async function rcConfig() {
+    const {materials, source} = await app.loadLibraryMaterials(['Bi2Te3.json', 'Copper.json']),
+      layer = 4,
+      block = 20,
+      nx = layer + block,
+      flux = () => ({kind: 'flux', value: {bias: 0, amplitude: 0, phase: 0}, h: 0});
+    return {
+      ...TE.default2D(),
+      description: 'RC circuit from thermoelectricity: 0.1 A AC is driven through a 0.2 mm Bi2Te3 layer on a 300 K heat sink and a 1 mm copper block (1 mm × 1 mm cross-section, 1D). ' +
+        'Peltier heat αT·I charges the heat capacity of the copper through the thermal resistance of the layer, and the Seebeck voltage α·ΔT reads the temperature back, so the impedance is Z = R0 + R_TE/(1 + iωτ): ' +
+        'a resistor R0 = L/(σA) in series with R_TE = α²T·R_th and C_TE = C_th/(α²T), where R_th = L/(kA), C_th is the copper heat capacity (plus one third of the layer’s) and τ = R_th·C_th. ' +
+        'Expected: R0 ≈ 1.84 mΩ, R_TE ≈ 1.50 mΩ (R_TE/R0 ≈ ZT of the layer), C_TE ≈ 294 F, corner frequency ≈ 0.36 Hz. After the sweep, the Bode plots show Impedance as Real/Imaginary parts: Re falls from R0 + R_TE to R0 and −Im peaks at R_TE/2 at the corner frequency. ' +
+        'Thicker Bi2Te3 raises R0 and R_TE; a longer copper block raises C_TE and lowers the corner frequency; a larger cross-section divides all impedances. See README for the derivation. Material properties ' + source + '.',
+      mode: 'periodic',
+      nx,
+      ny: 1,
+      lx: 1.2e-3,
+      ly: 1e-3,
+      depth: 1e-3,
+      frequency: .003,
+      samples: 64,
+      maxPeriods: 400,
+      materials,
+      materialMap: Array.from({length: nx}, (_, i) => i < layer ? 0 : 1),
+      thermal: {left: {kind: 'temperature', value: {bias: 300, amplitude: 0, phase: 0}, h: 0}, right: flux(), top: flux(), bottom: flux()},
+      electrical: {kind: 'current', value: {bias: 0, amplitude: .1, phase: 0}, sourceSide: 'left', sinkSide: 'right', sourceRange: [0, 1], sinkRange: [0, 1]},
+      sweep: {enabled: true, min: .003, max: 30, points: 13, spacing: 'log'}
+    };
+  };
   app.loadPreset = async () => {
     const token = ++app.presetToken,
-      p = app.$('preset').value;
-    if (p === 'module') {
+      p = app.$('preset').value,
+      build = {module: app.moduleConfig, rc: app.rcConfig}[p];
+    if (build) {
       try {
-        const config = await app.moduleConfig();
+        const config = await build();
         // Ignore a slow library load if another preset, a run or an import started meanwhile.
         if (token !== app.presetToken || app.worker || app.importingProject) return;
         TE.assertValid2DConfig(config);
@@ -545,8 +584,13 @@
         app.selected = 0;
         app.fill();
         app.dirty();
+        // The RC example is about the terminal impedance: show it as Real/Imaginary parts.
+        if (p === 'rc') {
+          app.$('bodeQuantity').value = 'impedance';
+          app.$('bodeRepresentation').value = 'complex';
+        }
       } catch (e) {
-        app.notice('Could not load the thermoelectric module: ' + e.message, true);
+        app.notice('Could not load the example: ' + e.message, true);
       }
       return;
     }
