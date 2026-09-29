@@ -173,6 +173,35 @@
           return scalar ? row[0] : row;
         });
       };
+      // Aitken-style extrapolation of three successive cycle-start states a, b, c. Returns the shift
+      // d·λ/(1 − λ) along d = c − b when the drift is geometric (0 < λ < maxRatio) along a stable
+      // direction (cosine between successive drifts > minCosine); otherwise null. The factor is capped.
+      TE.cycleExtrapolation = ([a, b, c], {
+        maxRatio = .995,
+        minCosine = .999,
+        maxFactor = 200
+      } = {}) => {
+        let d11 = 0,
+          d12 = 0,
+          d22 = 0;
+        for (let i = 0; i < c.length; i++) {
+          const d1 = b[i] - a[i],
+            d2 = c[i] - b[i];
+          d11 += d1 * d1;
+          d12 += d1 * d2;
+          d22 += d2 * d2;
+        }
+        if (!(d11 > 0 && d22 > 0 && Number.isFinite(d11 + d12 + d22))) return null;
+        const ratio = d12 / d11,
+          cosine = d12 / Math.sqrt(d11 * d22);
+        if (!(ratio > 0 && ratio < maxRatio && cosine > minCosine)) return null;
+        const factor = Math.min(ratio / (1 - ratio), maxFactor);
+        return {
+          ratio,
+          factor,
+          shift: c.map((v, i) => (v - b[i]) * factor)
+        };
+      };
     })(globalThis.TE);
     (function (TE) {
       class Mesh2D {
@@ -552,19 +581,22 @@
           });
           const seebeck = m.links.map((l, k) => p[k].alpha * (T[l.b] - T[l.a]));
           const current = V => m.links.map((l, k) => g[k] * (V[l.a] - V[l.b] - seebeck[k]));
-          // Superpose V = base + terminalVoltage·unit (base: both electrodes at 0 V with Seebeck
-          // sources; unit: sink at 1 V, no sources). Terminal currents are evaluated by
+          // Passive sign convention: the sink is grounded, the terminal voltage is
+          // U = V(source) − V(sink), and I is the current entering at the source, so a resistor
+          // gives U = R·I and absorbs U·I.
+          // Superpose V = base + U·unit (base: both electrodes at 0 V with Seebeck sources;
+          // unit: source at 1 V, sink at 0 V, no sources). Terminal currents are evaluated by
           // reciprocity over the whole domain, NOT from potential differences across the
           // electrode links. Those differences are tiny inside highly conductive contacts (Cu)
           // and lose all precision when a resistive region sets the current; the link formula
           // then effectively ignored the resistor. Current entering the source:
-          //   I = -Σ I_k (u_a - u_b)  ⇒  Iunit = -Σ g(Δu)²,  Ibase = Σ g·s·Δu.
+          //   I = Σ I_k (u_a - u_b)  ⇒  Iunit = Σ g(Δu)²,  Ibase = -Σ g·s·Δu.
           // Warm starts from the previous solutions (same electrodes, slowly varying conductances)
           // reach the unchanged CG tolerance in fewer iterations than a start from zero.
           const base = TE.graphSolve(m, g, zero, rhs, fixed, this.lastBase ? {
             initial: this.lastBase
           } : undefined);
-          this.sink.forEach(i => fixed.set(i, 1));
+          this.source.forEach(i => fixed.set(i, 1));
           const unit = TE.graphSolve(m, g, zero, zero, fixed, this.lastUnit ? {
             initial: this.lastUnit
           } : undefined);
@@ -574,10 +606,10 @@
             Ibase = 0;
           m.links.forEach((l, k) => {
             const du = unit[l.a] - unit[l.b];
-            Iunit -= g[k] * du * du;
-            Ibase += g[k] * seebeck[k] * du;
+            Iunit += g[k] * du * du;
+            Ibase -= g[k] * seebeck[k] * du;
           });
-          TE.assert(Iunit < 0 && Number.isFinite(Iunit) && Number.isFinite(Ibase), 'Electrodes have no conducting connection.');
+          TE.assert(Iunit > 0 && Number.isFinite(Iunit) && Number.isFinite(Ibase), 'Electrodes have no conducting connection.');
           let terminalVoltage;
           if (e.kind === 'voltage') terminalVoltage = TE.signal2D(e.value, t, this.frequency);else {
             const target = e.kind === 'open_circuit' ? 0 : TE.signal2D(e.value, t, this.frequency);
@@ -605,6 +637,7 @@
             } = this.properties(T),
             elect = this.electric(T, p, t),
             source = Array(m.n).fill(0),
+            peltier = Array(m.n).fill(0),
             q = [],
             work = [];
           m.links.forEach((l, k) => {
@@ -616,6 +649,10 @@
             TE.assert([I, P, pel].every(Number.isFinite), 'Electrical/thermal power exceeds the finite numerical range.');
             source[l.a] += -pel + P / 2;
             source[l.b] += pel + P / 2;
+            // With P = I²/g + αI(Tb − Ta), the link adds −αI·Ta + I²/2g to node a and +αI·Tb + I²/2g
+            // to node b: every node source is −T_i·peltier_i + Joule, exactly (Peltier and Thomson).
+            peltier[l.a] += p[k].alpha * I;
+            peltier[l.b] -= p[k].alpha * I;
             q.push(pel - p[k].k * (T[l.b] - T[l.a]));
             work.push(P);
           });
@@ -625,6 +662,7 @@
             cap,
             ...elect,
             source,
+            peltier,
             q,
             work
           };
@@ -708,9 +746,13 @@
             lastResidual = null;
           for (const [i, v] of bc.fixed) T[i] = v;
           for (let iteration = 0; iteration < maxIterations; iteration++) {
+            // Semi-implicit Peltier: a node source −T·c with c > 0 (Peltier cooling) is moved to the
+            // diagonal by adding c·T to both sides. The fixed point, the SPD matrix and the acceptance
+            // test are unchanged; a lagged cooling term would make Picard oscillate at high current.
             const b = this.balance(T, t),
-              diag = bc.diag.map((v, i) => v + (gammaDt ? b.cap[i] / gammaDt : 0)),
-              rhs = b.source.map((v, i) => v + bc.rhs[i] + (gammaDt ? b.cap[i] / gammaDt * target[i] : 0));
+              implicitPeltier = b.peltier.map(v => v > 0 ? v : 0),
+              diag = bc.diag.map((v, i) => v + implicitPeltier[i] + (gammaDt ? b.cap[i] / gammaDt : 0)),
+              rhs = b.source.map((v, i) => v + implicitPeltier[i] * T[i] + bc.rhs[i] + (gammaDt ? b.cap[i] / gammaDt * target[i] : 0));
             const candidate = TE.graphSolve(m, b.p.map(p => p.k), diag, rhs, bc.fixed, {
               initial: T,
               rtol: linearRtol
@@ -738,7 +780,7 @@
             }
             T = candidate.map((v, i) => bc.fixed.has(i) ? v : T[i] + relaxation * (v - T[i]));
           }
-          throw new Error(`Nonlinear thermal iteration failed (update ${error.toExponential(2)} K${lastResidual === null ? '' : `, heat-balance residual ${lastResidual.toExponential(2)}`}). Reduce excitation or refine time steps.`);
+          throw new Error(`Nonlinear thermal iteration failed (update ${error.toExponential(2)} K${lastResidual === null ? '' : `, heat-balance residual ${lastResidual.toExponential(2)}`}). ${gammaDt ? 'Reduce the excitation or use more time steps per period.' : 'Reduce the excitation or check the material laws.'}`);
         }
         snapshot(T, t = 0, steady = false) {
           const m = this.mesh,
@@ -777,7 +819,7 @@
             } of faces) heatOut += A * (c.kind === 'flux' ? v : (c.h ?? 0) * (T[node] - v));
           }
           for (const [i] of bc.fixed) heatOut += res[i];
-          const electricalPower = -b.current * b.terminalVoltage;
+          const electricalPower = b.current * b.terminalVoltage;
           TE.checkRange(electricalPower, 'power');
           TE.assert([...Jx, ...Jy, ...qx, ...qy, electricalPower, heatOut, ...res].every(Number.isFinite), 'Derived current density, heat flux or power exceeds the finite numerical range.');
           return {
@@ -817,9 +859,10 @@
           periodicAtol = 2e-7,
           periodicRtol = 1e-10,
           tolerance = 2e-9,
-          harmonicVoltageAtol = 1e-12,
+          harmonicVoltageAtol = null,
           harmonicCurrentAtol = 1e-10,
           harmonicRtol = 1e-6,
+          extrapolate = true,
           checkpointEvery = 5,
           checkpointIntervalMs = 1000,
           T0,
@@ -829,7 +872,7 @@
           TE.assert(Number.isFinite(frequency) && frequency > 0, 'Frequency must be positive.');
           TE.assert(Number.isInteger(samples) && samples >= 32 && samples <= 2048, 'Use 32–2048 integer steps per period.');
           TE.assert(Number.isInteger(maxPeriods) && maxPeriods <= 1000 && Number.isInteger(minPeriods) && maxPeriods >= minPeriods && minPeriods >= 2, 'Invalid cycle limit.');
-          TE.assert([periodicAtol, periodicRtol, tolerance, harmonicVoltageAtol, harmonicCurrentAtol, harmonicRtol].every(v => Number.isFinite(v) && v > 0), 'Solver tolerances must be positive and finite.');
+          TE.assert([periodicAtol, periodicRtol, tolerance, harmonicCurrentAtol, harmonicRtol].every(v => Number.isFinite(v) && v > 0) && (harmonicVoltageAtol === null || Number.isFinite(harmonicVoltageAtol) && harmonicVoltageAtol > 0), 'Solver tolerances must be positive and finite.');
           TE.assert(Number.isInteger(checkpointEvery) && checkpointEvery >= 1 && Number.isFinite(checkpointIntervalMs) && checkpointIntervalMs >= 0, 'Invalid checkpoint cadence.');
           TE.assert(Number.isFinite(1 / (frequency * samples)) && 1 / (frequency * samples) > 0, 'Unrepresentable time step.');
           TE.assert(TE.estimateRetainedBytes({
@@ -851,8 +894,16 @@
             lastCheckpoint = 0,
             packageMs = 0,
             maxHeatResidual = 0,
-            maxHeatResidualWatts = 0;
+            maxHeatResidualWatts = 0,
+            cycleStarts = [],
+            extrapolations = 0;
           const dt = 1 / (frequency * samples);
+          // Keep the voltage test consistent with the temperature test: a cycle-to-cycle temperature
+          // change of periodicAtol across the strongest Seebeck coefficient moves the terminal voltage
+          // by about αmax·periodicAtol. A much stricter voltage tolerance would set the cycle count
+          // through the slowly settling DC Seebeck offset, long after 1ω had converged.
+          const alphaMax = this.properties(T).p.reduce((s, v) => Math.max(s, Math.abs(v.alpha)), 0);
+          harmonicVoltageAtol = harmonicVoltageAtol ?? Math.max(1e-12, alphaMax * periodicAtol);
           const packageCycle = converged => {
             const traces = {
               temperature: history,
@@ -892,7 +943,8 @@
                 heatResidualWatts: maxHeatResidualWatts,
                 harmonicVoltageAtol,
                 harmonicCurrentAtol,
-                harmonicRtol
+                harmonicRtol,
+                cycleExtrapolations: extrapolations
               }
             };
           };
@@ -966,6 +1018,30 @@
             }
             previous = history;
             previousTerminal = terminalHarmonics;
+            // Cycle extrapolation. The approach to the periodic state is dominated by the slowest
+            // thermal mode, so successive cycle-start states differ by d_k ≈ λ·d_(k−1). Jump to the
+            // limit along that mode, then run at least two plain cycles: acceptance still compares
+            // two unextrapolated cycles with unchanged tolerances. Never within the last two cycles.
+            cycleStarts.push(T);
+            if (cycleStarts.length > 3) cycleStarts.shift();
+            if (extrapolate && older && cycleStarts.length === 3 && cycle <= maxPeriods - 2) {
+              const jump = TE.cycleExtrapolation(cycleStarts);
+              let shifted = jump && T.map((v, i) => v + jump.shift[i]);
+              if (shifted) try {
+                this.properties(shifted);
+              } catch {
+                shifted = null; // Outside the operating range or a material law: keep integrating.
+              }
+              if (shifted) {
+                T = shifted;
+                older = older.map((v, i) => v + jump.shift[i]);
+                previous = null;
+                previousTerminal = null;
+                cycleStarts = [];
+                error = temperatureError = harmonicError = Infinity;
+                extrapolations++;
+              }
+            }
           }
           const failure = new Error(`Periodic state not reached in ${maxPeriods} cycles (combined error ${error.toExponential(2)}).`);
           failure.unconverged = true;
@@ -1216,8 +1292,10 @@
       };
     })(globalThis.TE);
     (function (TE) {
+      // Model file format version, checked when models and projects are imported.
+      TE.modelVersion = 2;
       TE.default2D = () => ({
-        version: 1,
+        version: TE.modelVersion,
         mode: 'periodic',
         nx: 12,
         ny: 8,
@@ -1349,7 +1427,7 @@
             y: s.mesh.y,
             materialMap: s.mesh.map
           },
-          convention: 'Peak phasors: u(t)=U0+Re(sum(Un exp(i n omega t))). Terminal voltage = V(sink)-V(source).'
+          convention: 'Peak phasors: u(t)=U0+Re(sum(Un exp(i n omega t))). Terminal voltage U = V(source)-V(sink), V(sink) = 0; current I enters the source; absorbed power = U*I.'
         });
         const r = c.mode === 'steady' ? s.solveSteady() : s.solvePeriodic(c.frequency, {
           samples: c.samples,
@@ -1493,7 +1571,25 @@
         return {
           cells,
           nodal,
+          range: TE.valueRange(cells, nodal ? raw : []),
           unit: key === 'temperature' ? 'K' : key === 'voltage' ? 'V' : ['qx', 'qy'].includes(key) ? 'W/m²' : 'A/m²'
+        };
+      };
+      // Colour-scale range over displayed cell values and, for nodal fields, the nodal values: cell
+      // averages never reach the nodal extremes (e.g. a prescribed boundary temperature).
+      TE.valueRange = (...lists) => {
+        let lo = Infinity,
+          hi = -Infinity;
+        for (const list of lists) for (const v of list) if (v !== null && Number.isFinite(v)) {
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+        return lo <= hi ? {
+          lo,
+          hi
+        } : {
+          lo: 0,
+          hi: 0
         };
       };
       TE.arrowNoiseFloor = r => {
@@ -1682,7 +1778,8 @@
             reason = reason || 'Normalization exceeds the finite numerical range.';
           }
           if (quantity !== 'impedance' && normalization !== 'raw') unit += '/(' + refUnit + (exponent === 1 ? '' : '^' + exponent) + ')';
-          let phase = !reason && a > phaseFloor ? wrap(angle(z) + (quantity === 'impedance' ? 180 : 0) - n * angle(ref)) : null;
+          // Impedance U/I needs no sign flip: U = V(source) − V(sink) and I enters the source.
+          let phase = !reason && a > phaseFloor ? wrap(angle(z) - n * angle(ref)) : null;
           if (magnitude !== null && magnitude > 1e15) {
             magnitude = null;
             phase = null;
@@ -1718,10 +1815,10 @@
     (function (TE) {
       TE.equationGuide = [{
         "title": "Governing equations and boundaries",
-        "html": "<h3>Unknown fields and constitutive laws</h3><p>T(x,y,t) is absolute temperature (K), V(x,y,t) electric potential (V). The local material defines σ(T), k(T), α(T), density ρ(T), and Cp(T). J is electric current density; q is total heat flux.</p><p>J = −σ(T)[∇V + α(T)∇T]<br>∇·J = 0<br>q = α(T)TJ − k(T)∇T<br>ρCp ∂T/∂t = −∇·q − J·∇V</p><h3>Thermoelectric coupling</h3><p>Within a smooth homogeneous material, these equations give:<br>ρCp ∂T/∂t = ∇·(k∇T) + |J|²/σ − T(dα/dT)J·∇T.<br>The last two terms are Joule and Thomson heating. Π = αT is the Peltier coefficient; discontinuities in α produce interface Peltier transport through q. These effects are already included in total flux and must not be added a second time.</p><h3>Boundary and interface conditions</h3><p>Electrical contacts are equipotential. V(source) = 0. Voltage mode prescribes V(sink); current mode sets total current entering the source; open circuit imposes zero net contact current. Other edges satisfy J·n = 0. Thermal edges prescribe T, q·n = qout, or q·n = h(T − Tambient), where n is the outward normal. Zero total flux includes Peltier transport. Ideal interfaces have continuous T, V, normal J and total normal q; contact resistance is absent. Peltier coupling changes the conductive-flux balance: qcond,right − qcond,left = −Jn T(αright − αleft). Temperature itself remains continuous; its slope generally changes at an interface. Opposite interfaces in Cu/Bi₂Te₃/Cu have opposite Peltier signs for the same current direction. Strong Joule heating can mask cooling. With zero-bias sinusoidal current, inspect the signed 1ω temperature response (real part or phase), not only its DC mean or unsigned amplitude.</p>"
+        "html": "<h3>Unknown fields and constitutive laws</h3><p>T(x,y,t) is absolute temperature (K), V(x,y,t) electric potential (V). The local material defines σ(T), k(T), α(T), density ρ(T), and Cp(T). J is electric current density; q is total heat flux.</p><p>J = −σ(T)[∇V + α(T)∇T]<br>∇·J = 0<br>q = α(T)TJ − k(T)∇T<br>ρCp ∂T/∂t = −∇·q − J·∇V</p><h3>Thermoelectric coupling</h3><p>Within a smooth homogeneous material, these equations give:<br>ρCp ∂T/∂t = ∇·(k∇T) + |J|²/σ − T(dα/dT)J·∇T.<br>The last two terms are Joule and Thomson heating. Π = αT is the Peltier coefficient; discontinuities in α produce interface Peltier transport through q. These effects are already included in total flux and must not be added a second time.</p><h3>Boundary and interface conditions</h3><p>Electrical contacts are equipotential; the sink is grounded, V(sink) = 0. The terminal voltage is U = V(source) − V(sink) and the terminal current I enters at the source (passive sign convention: a resistor gives U = RI and absorbs UI). Voltage mode prescribes U; current mode prescribes I; open circuit imposes I = 0. The external leads are ideal conductors with zero Seebeck coefficient: U is measured against an α = 0 reference, and an electrode on thermoelectric material exchanges the contact Peltier heat αTI (absorbed where positive current enters a material with α &gt; 0). Other edges satisfy J·n = 0. Thermal edges prescribe T, q·n = qout, or q·n = h(T − Tambient), where n is the outward normal. Zero total flux includes Peltier transport. Ideal interfaces have continuous T, V, normal J and total normal q; contact resistance is absent. Peltier coupling changes the conductive-flux balance: qcond,right − qcond,left = −Jn T(αright − αleft). Temperature itself remains continuous; its slope generally changes at an interface. Opposite interfaces in Cu/Bi₂Te₃/Cu have opposite Peltier signs for the same current direction. Strong Joule heating can mask cooling. With zero-bias sinusoidal current, inspect the signed 1ω temperature response (real part or phase), not only its DC mean or unsigned amplitude.</p>"
       }, {
         "title": "Excitation and numerical method",
-        "html": "<h3>DC and harmonic excitation</h3><p>DC solves the stationary system with ∂T/∂t = 0, using only DC biases. Periodic inputs use b + A cos(2πft + φ); φ is in degrees in the editor. The nonlinear time-domain solution generates harmonics:<br>u(t) = U₀ + Re[Σ Uₙ exp(inωt)], n = 1,2,3.<br>Coefficients are peak phasors, not RMS. Instantaneous spatial profiles use stored time samples, including all resolved harmonics; they are not reconstructed from only 1ω–3ω.</p><h3>Discretization and iteration</h3><p>Each rectangular cell contributes four half-face links. For a link a→b of length L and half-face area A:<br>g = A/[L mean(ρₑ(Ta),ρₑ(Tb))]<br>Iab = g[Va − Vb − αmean(Tb − Ta)]<br>Qab = αmean(Ta + Tb)Iab/2 − kmean A(Tb − Ta)/L.<br>Electrical work Iab(Va − Vb) is shared between the two nodes. Cell heat capacity is split among its four corners. Coupled equations are iterated with Picard, undamped first and damped when an undamped step fails or stops contracting; linear graph systems use warm-started, Jacobi-preconditioned conjugate gradients. BDF2 advances periodic runs after one backward-Euler startup step. Cycle convergence checks successive temperature histories and terminal DC/1ω–3ω phasors. Nonlinear acceptance also requires a normalized heat-balance residual ≤ 1.</p><p>Ly × depth gives the cross-section of a 1D reduction. Ny = 1, full left/right contacts and zero top/bottom flux produce the transverse-uniform limit. Grid/time refinement remains necessary, especially for weak 3ω. The model assumes isotropic properties, perfect interfaces and no front/back heat losses.</p>"
+        "html": "<h3>DC and harmonic excitation</h3><p>DC solves the stationary system with ∂T/∂t = 0, using only DC biases. Periodic inputs use b + A cos(2πft + φ); φ is in degrees in the editor. The nonlinear time-domain solution generates harmonics:<br>u(t) = U₀ + Re[Σ Uₙ exp(inωt)], n = 1,2,3.<br>Coefficients are peak phasors, not RMS. Instantaneous spatial profiles use stored time samples, including all resolved harmonics; they are not reconstructed from only 1ω–3ω.</p><h3>Discretization and iteration</h3><p>Each rectangular cell contributes four half-face links. For a link a→b of length L and half-face area A:<br>g = A/[L mean(ρₑ(Ta),ρₑ(Tb))]<br>Iab = g[Va − Vb − αmean(Tb − Ta)]<br>Qab = αmean(Ta + Tb)Iab/2 − kmean A(Tb − Ta)/L.<br>Electrical work Iab(Va − Vb) is shared between the two nodes. Cell heat capacity is split among its four corners. Coupled equations are iterated with Picard, undamped first and damped when an undamped step fails or stops contracting; Peltier cooling at a node, a source proportional to −T, is treated implicitly on the matrix diagonal. Linear graph systems use warm-started, Jacobi-preconditioned conjugate gradients. BDF2 advances periodic runs after one backward-Euler startup step. Cycle convergence checks successive temperature histories and terminal DC/1ω–3ω phasors; the voltage tolerance follows the temperature tolerance through the largest Seebeck coefficient. When the cycle-to-cycle drift decays geometrically along a stable direction, the cycle start is extrapolated to its limit, and convergence is then checked on two plain cycles. Nonlinear acceptance also requires a normalized heat-balance residual ≤ 1.</p><p>Ly × depth gives the cross-section of a 1D reduction. Ny = 1, full left/right contacts and zero top/bottom flux produce the transverse-uniform limit. Grid/time refinement remains necessary, especially for weak 3ω: BDF2 shifts the effective frequency of harmonic n by about (2πn/N)²/3 with N steps per period, about 3 % at 3ω with 64 steps and 0.2 % with 256. The model assumes isotropic properties, perfect interfaces and no front/back heat losses.</p>"
       }];
     })(globalThis.TE);
 
@@ -1753,11 +1850,14 @@
         TE.assert(['amplitude', 'phase', 'real', 'imaginary'].includes(representation), 'Unknown harmonic representation.');
         if (key === 'J') {
           const x = TE.cellPhasors(r, 'Jx', n), y = TE.cellPhasors(r, 'Jy', n);
-          return {values: x.map((z, i) => Math.hypot(z.re, z.im, y[i].re, y[i].im))};
+          const values = x.map((z, i) => Math.hypot(z.re, z.im, y[i].re, y[i].im));
+          return {values, range: TE.valueRange(values)};
         }
         if (n > 0 && representation === 'phase') return TE.phaseMap(r, key, n);
-        return {values: TE.cellPhasors(r, key, n).map(z => !n || representation === 'real' ? z.re :
-          representation === 'imaginary' ? z.im : Math.hypot(z.re, z.im))};
+        const pick = z => !n || representation === 'real' ? z.re : representation === 'imaginary' ? z.im : Math.hypot(z.re, z.im);
+        const values = TE.cellPhasors(r, key, n).map(pick);
+        const nodes = ['temperature', 'voltage'].includes(key) ? (r.method === 'steady' ? r[key].map(re => ({re, im: 0})) : r.harmonics[key][n]).map(pick) : [];
+        return {values, range: TE.valueRange(values, nodes)};
       };
       TE.phaseMap = (r, key, n, {
         relative = TE.phaseMapSettings.relative,
@@ -1775,6 +1875,7 @@
         const values = phasors.map(z => Math.hypot(z.re, z.im) > threshold ? Math.atan2(z.im, z.re) * 180 / Math.PI : null);
         return {
           values,
+          range: {lo: -180, hi: 180},
           threshold,
           masked: values.filter(v => v === null).length
         };

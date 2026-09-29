@@ -24,7 +24,7 @@
       temperature: 'Temperature · K',
       flux: 'Outward total flux · W/m²',
       convection: 'Convection · ambient K'
-    }[k]}</option>`).join('')}</select></label><div class="grid3">${app.input('DC value', 'bias', typeof b.value === 'number' ? b.value : b.value.bias ?? 0)}${app.input('AC peak', 'amplitude', typeof b.value === 'number' ? 0 : b.value.amplitude ?? 0)}${app.input('Phase', 'phase', typeof b.value === 'number' ? 0 : b.value.phase ?? 0, '°')}${app.input('Convection h', 'h', b.h ?? 0)}</div></div>`; }).join('');
+    }[k]}</option>`).join('')}</select></label><div class="grid3">${app.input('DC value', 'bias', typeof b.value === 'number' ? b.value : b.value.bias ?? 0)}${app.input('AC peak', 'amplitude', typeof b.value === 'number' ? 0 : b.value.amplitude ?? 0)}${app.input('Phase', 'phase', typeof b.value === 'number' ? 0 : b.value.phase ?? 0, '°')}${app.input('Convection h', 'h', b.h ?? 0, 'W/m² K')}</div></div>`; }).join('');
   };
   app.fill = function fill() {
     app.$('modelNote').textContent = app.config.description ?? '';

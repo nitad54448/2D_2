@@ -63,11 +63,12 @@ Density, heat capacity and thermal conductivity are constant. Materials are isot
 
 Electrical:
 
-- The two electrodes are equipotential contacts on the domain edge; the source is at 0 V. All other edges are insulated (J·n = 0).
-- **Total current**: the current entering the source (A). The sink voltage adjusts to deliver it. Current density may vary across an electrode.
-- **Sink voltage**: V(sink) is prescribed (V).
+- The two electrodes are equipotential contacts on the domain edge; the sink is grounded at 0 V. All other edges are insulated (J·n = 0).
+- The terminal voltage is U = V(source) − V(sink), and the terminal current I enters at the source and leaves at the sink. This is the passive sign convention: a resistor gives U = R·I, and the absorbed electrical power is U·I.
+- **Total current**: I is prescribed (A). The terminal voltage adjusts to deliver it. Current density may vary across an electrode.
+- **Terminal voltage**: U is prescribed (V).
 - **Open circuit**: zero net terminal current.
-- The terminal voltage is V(sink) − V(source). Positive current enters at the source and leaves at the sink.
+- The external leads are ideal conductors with zero Seebeck coefficient. U is therefore measured against an α = 0 reference, and an electrode on thermoelectric material exchanges the contact Peltier heat α·T·I with its lead: heat is absorbed where positive current enters a material with α > 0 and released where it leaves. On a side with a flux or convection condition this heat stays in the domain.
 - Electrode ranges are given in % along the edge, bottom→top on vertical edges and left→right on horizontal edges. Each electrode needs at least two boundary nodes, and the electrodes must not share a node.
 
 Thermal, for each side (n is the outward normal):
@@ -116,21 +117,23 @@ Qab = αmean (Ta + Tb) Iab / 2 − kmean A (Tb − Ta) / L
 
 Electrical work Iab(Va − Vb) is shared equally between the two nodes. Each cell's heat capacity is split among its four corners.
 
-**Electrical problem.** The potential is the superposition of a solution with both electrodes at 0 V (Seebeck sources only) and a unit solution with the sink at 1 V. Terminal currents follow from reciprocity over the whole domain, which keeps them accurate where highly conductive contacts meet resistive regions.
+**Electrical problem.** The potential is the superposition of a solution with both electrodes at 0 V (Seebeck sources only) and a unit solution with the source at 1 V and the sink at 0 V. Terminal currents follow from reciprocity over the whole domain, which keeps them accurate where highly conductive contacts meet resistive regions.
 
 **Linear systems.** Matrix-free conjugate gradients with Jacobi preconditioning, relative tolerance 2·10⁻¹² in the Jacobi-weighted residual norm, warm-started from the previous solution.
 
-**Nonlinear coupling.** The electrical and thermal problems are coupled by Picard iteration, undamped first. If an undamped step fails or stops contracting, it is repeated with damping 0.85; after three such fallbacks the run stays damped. A step is accepted when the temperature update is ≤ 2·10⁻⁹ K and the normalized heat-balance residual is ≤ 1. If the update has converged but the heat balance has not, the next thermal solve uses a 100× tighter conjugate-gradient tolerance. This matters with small time steps, where the linear tolerance, relative to heat capacity × absolute temperature, is looser than the heat-balance test.
+**Nonlinear coupling.** The electrical and thermal problems are coupled by Picard iteration, undamped first. The Peltier and Thomson heat of each node has the exact form −T·c, with c computed from the link currents. Where c > 0 (Peltier cooling) this term is treated implicitly on the matrix diagonal: the matrix stays symmetric positive definite, the converged solution is unchanged, and the iteration does not oscillate at high current as it would with a lagged cooling term. In the thermoelectric module example the steady solution converges in 5 to 8 iterations up to at least 20 A. If an undamped step fails or stops contracting, it is repeated with damping 0.85; after three such fallbacks the run stays damped. A step is accepted when the temperature update is ≤ 2·10⁻⁹ K and the normalized heat-balance residual is ≤ 1. If the update has converged but the heat balance has not, the next thermal solve uses a 100× tighter conjugate-gradient tolerance. This matters with small time steps, where the linear tolerance, relative to heat capacity × absolute temperature, is looser than the heat-balance test.
 
-**Time integration.** BDF2 after one backward-Euler startup step, with 64 to 1024 steps per period.
+**Time integration.** BDF2 after one backward-Euler startup step, with 64 to 1024 steps per period. With N steps per period, BDF2 shifts the effective frequency of harmonic n by about (2πn/N)²/3: 0.3 % at 1ω and 3 % at 3ω with 64 steps, 0.02 % and 0.2 % with 256. Use at least 256 steps for 3ω results.
 
 **Periodic convergence.** A run converges, at the earliest in its third cycle, when the combined error is ≤ 1. The combined error is the largest of:
 
 - the change of the temperature history between successive cycles, relative to 2·10⁻⁷ K + 10⁻¹⁰·|T|;
-- the change of the terminal DC to 3ω phasors, relative to 10⁻¹² V (voltage) or 10⁻¹⁰ A (current) + 10⁻⁶·|U|;
+- the change of the terminal DC to 3ω phasors, relative to an absolute tolerance plus 10⁻⁶·|U|. For the current the absolute tolerance is 10⁻¹⁰ A. For the voltage it is αmax·2·10⁻⁷ K, at least 10⁻¹² V, where αmax is the largest Seebeck coefficient of the model (4·10⁻¹¹ V for Bi₂Te₃): a temperature change at the temperature tolerance moves the terminal voltage by about that much. The value used is reported with the diagnostics;
 - the normalized heat-balance residual.
 
 Otherwise the run ends at the maximum cycle count (3 to 1000) as unconverged.
+
+**Cycle extrapolation.** The approach to the periodic state is dominated by the slowest thermal mode, so successive cycle-start states differ by d(k) ≈ λ·d(k−1). When three successive cycle starts show 0 < λ < 0.995 with nearly parallel drifts (cosine > 0.999), the cycle start is moved to the extrapolated limit, by d·λ/(1 − λ) (at most 200·d), and the preceding step is shifted by the same amount so BDF2 continues smoothly. The jump only changes a starting state: convergence is still tested on two unextrapolated cycles with unchanged tolerances, the last two cycles of the budget are never extrapolated, and a jump that would leave the operating range or the validity of a material law is skipped. Without a periodic state (no thermal anchor and a net heat input), the drift does not decay and no jump is made. In the RC example, 30 Hz converges in 6 cycles and 300 Hz in 24; without extrapolation they need 123 and 890 cycles for the same impedance to 7 digits. The number of extrapolations is reported with the diagnostics.
 
 **Checkpoints.** The first and last cycles of a periodic run are always saved. Intermediate cycles are saved every 5 cycles or after one second, less often when saving would exceed about 10 % of the run time. **Stop** keeps the latest saved complete cycle, labelled unconverged and provisional.
 
@@ -140,8 +143,8 @@ Otherwise the run ends at the maximum cycle count (3 to 1000) as unconverged.
 
 - Frequencies run from a minimum to a maximum over 2 to 100 points, with logarithmic or linear spacing. Bias, amplitude and phase stay fixed, and every frequency starts independently with no shared transient history.
 - A frequency that reaches the maximum cycle count is kept as an unconverged point and the sweep continues. Unconverged points are excluded from the Bode plots. A solver error stops the sweep. **Stop** keeps the completed points and the latest saved cycle of the current point.
-- **Quantity**: terminal voltage (sink − source), terminal current, impedance, or the temperature, potential, Jx, Jy, qx or qy at a probe given in % of the width and height. Temperature and potential snap to the nearest node; J and q use the containing cell.
-- **Impedance** is (V(source) − V(sink)) / I at 1ω.
+- **Quantity**: terminal voltage (source − sink), terminal current, impedance, or the temperature, potential, Jx, Jy, qx or qy at a probe given in % of the width and height. Temperature and potential snap to the nearest node; J and q use the containing cell.
+- **Impedance** is U/I = (V(source) − V(sink)) / I at 1ω.
 - **Harmonic**: 1ω, 2ω or 3ω.
 - **Reference** for phase and normalization: the electrical excitation, the measured terminal current or voltage at 1ω, the excitation of a thermal side, or the time origin cos(nωt). References that are inactive in the model are disabled.
 - **Phase** = φ(output, n) − n·φ(reference, 1), wrapped to ±180° or unwrapped. It is shown only when the raw output amplitude exceeds the phase threshold.
@@ -153,16 +156,16 @@ Otherwise the run ends at the maximum cycle count (3 to 1000) as unconverged.
 
 ## Results
 
-- **Metrics**: terminal voltage (1ω peak amplitude and phase for periodic runs, the signed value for DC), temperature range, convergence and heat-balance diagnostics.
+- **Metrics**: terminal voltage U = V(source) − V(sink) (1ω peak amplitude and phase for periodic runs, the signed value for DC), temperature range, convergence and heat-balance diagnostics. Under current drive a resistor shows a phase near 0°; a thermoelectric element shows a small negative (capacitive) phase.
 - **Spatial response**: maps of temperature, voltage, |J|, Jx, Jy, qx and qy at DC, 1ω, 2ω or 3ω, as Amplitude, Phase, Re or Im.
   - DC is the signed mean.
-  - Temperature and voltage average the four complex nodal phasors of each cell before the representation is taken.
+  - Temperature and voltage average the four complex nodal phasors of each cell before the representation is taken. Their colour scale spans the nodal values as well as the cell values, so its ends show the true extremes, such as a prescribed boundary temperature, which cell averages never reach.
   - |J| is the vector norm √(|Jx|² + |Jy|²), not a harmonic of instantaneous |J|.
   - Phase maps grey out cells whose amplitude is at or below max(absolute threshold, 10⁻⁶ × field peak). The absolute thresholds are 10⁻⁷ K, 10⁻¹² V, and 10⁻⁹ SI units for J and q.
 - **Current arrows** show the real current phasor at 0°: direction and relative magnitude. Vectors below 10⁻⁸ of the strongest current harmonic (or 10⁻¹² A/m²) are hidden.
 - **Probe**: click the map to move it. Periodic runs plot its temperature and the terminal voltage over the saved cycle; DC runs show its coordinates, temperature and potential.
 - **Spatial field · selected time**: the instantaneous field at any stored sample of the cycle.
-- **Terminal harmonics**: DC to 3ω peak phasors of the terminal voltage, referenced to cos(ωt).
+- **Terminal harmonics**: DC to 3ω peak phasors of the terminal voltage U = V(source) − V(sink), referenced to cos(ωt).
 
 ## Examples
 
@@ -299,7 +302,7 @@ The lumped model is accurate here because the example satisfies its assumptions:
 | Larger cross-section (A = Ly × depth) | Every resistance divides by A and C_TE multiplies by A; τ and fc do not change. |
 | Different layer material | R_TE/R0 follows α²σT0/k; τ follows L·Lc·ρCp_Cu/k. |
 
-**Run time and convergence.** Each frequency starts from 300 K and must reach a periodic state. Transients decay with τ, so low frequencies converge in the minimum of 3 cycles, while 30 Hz needs about 120 cycles. The full sweep takes about 10–15 s in a browser. Frequencies well above 30 Hz need proportionally more cycles; raise **Maximum cycles** if points come back unconverged.
+**Run time and convergence.** Each frequency starts from 300 K and must reach a periodic state. Transients decay with τ, so low frequencies converge in the minimum of 3 cycles. At higher frequencies the slow transient spans many cycles (123 at 30 Hz), and cycle extrapolation removes it: every point of the sweep converges within 3 to 8 cycles, and the full sweep takes a few seconds in a browser. Frequencies well above 30 Hz still need somewhat more cycles (24 at 300 Hz); raise **Maximum cycles** if points come back unconverged.
 
 ## Material library
 
@@ -332,7 +335,7 @@ Material file format:
 
 ## Models, projects and exports
 
-**Export model / Import model.** The model as JSON, up to 2 MB, with scalar material values and 64, 128, 256, 512 or 1024 steps per period.
+**Export model / Import model.** The model as JSON, up to 2 MB, with `"version": 2`, scalar material values and 64, 128, 256, 512 or 1024 steps per period. Models with another version are rejected.
 
 **Save project / complete results ZIP** (Results → Export). The archive holds everything needed to reopen the results. **Import Project** (left of Import model) restores:
 
@@ -366,7 +369,7 @@ Export rules:
 
 Import requirements:
 
-- Import accepts project ZIPs containing `project.json` (format `thermoelectric-lab-project`, version 1), stored or Deflate-compressed. Deflate requires browser support for raw Deflate decompression.
+- Import accepts project ZIPs containing `project.json` (format `thermoelectric-lab-project`, version 2) with version-2 models, stored or Deflate-compressed. Deflate requires browser support for raw Deflate decompression.
 - Encrypted, split and ZIP64 archives, and results ZIPs without `project.json`, are rejected.
 - Limits: 2 GiB per archive, 256 MiB of JSON, and the retained-data budget.
 - Archived HTML and scripts are never executed.
@@ -391,4 +394,4 @@ Other exports:
 
 ## Tests
 
-With Node.js 24 or newer, run `node tests/regression.cjs`. The suite covers solver smoke cases, worker encoding and decoding, spatial phasors, display-state handling, project round trips, rejection of results ZIPs without `project.json`, and malformed archive rejection. UI tests use DOM and canvas test doubles.
+With Node.js 24 or newer, run `node tests/regression.cjs` (29 checks, a few seconds). The suite covers solver smoke cases and the terminal sign convention, an ideal Peltier leg against its analytic solution, convergence of the module example beyond its optimum current, cycle extrapolation and the terminal-voltage tolerance, worker encoding and decoding, spatial phasors and colour-scale ranges, display-state handling, project round trips, model and project version checks, rejection of results ZIPs without `project.json`, malformed archive rejection, and agreement of the Solver-tab equations with the report guide. UI tests use DOM and canvas test doubles.

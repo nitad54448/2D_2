@@ -35,7 +35,8 @@
     app.$('errorMetric').textContent = periodic ? (r.converged ? 'Normalized error ' : 'Unconverged cycle · error ') + (r.periodicError === null ? 'not available' : r.periodicError.toExponential(2)) + (r.converged ? ' ≤ 1' : '') : 'Energy residual ' + r.energyResidual.toExponential(2) + ' W';
     const diagnostics = r.diagnostics;
     app.$('diagnosticsNote').textContent = diagnostics
-      ? (periodic ? `Cycle errors: temperature ${diagnostics.temperatureCycleError === null ? 'pending' : app.fmt(diagnostics.temperatureCycleError)}; terminal harmonics ${diagnostics.terminalHarmonicError === null ? 'pending' : app.fmt(diagnostics.terminalHarmonicError)}. ` : '') +
+      ? (periodic ? `Cycle errors: temperature ${diagnostics.temperatureCycleError === null ? 'pending' : app.fmt(diagnostics.temperatureCycleError)}; terminal harmonics ${diagnostics.terminalHarmonicError === null ? 'pending' : app.fmt(diagnostics.terminalHarmonicError)}. ` +
+        (diagnostics.cycleExtrapolations ? `Cycle start extrapolated ${diagnostics.cycleExtrapolations}× (acceptance uses unextrapolated cycles). ` : '') : '') +
         `Heat balance: normalized residual ${app.fmt(diagnostics.heatResidualNormalized)}; maximum free-node residual ${app.fmt(diagnostics.heatResidualWatts)} W. Acceptance requires normalized errors ≤ 1.`
       : '';
     app.$('spectrum').innerHTML = hs.map((z, n) => `<tr><td>${n ? n + 'ω' : 'DC'}</td><td>${n ? app.fmt(n * r.frequency) : '0'} Hz</td><td>${app.amp(z).toExponential(5)}</td><td>${app.amp(z) > 1e-16 ? app.phase(z).toFixed(3) + '°' : '—'}</td><td>${z.re.toExponential(5)}</td><td>${z.im.toExponential(5)}</td></tr>`).join('');

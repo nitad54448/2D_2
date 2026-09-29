@@ -44,9 +44,42 @@ async function check(label, fn) {await fn(); checks++; console.log('PASS', label
   for (const name of fs.readdirSync(path.join(root, 'assets')).filter(x => x.endsWith('.js'))) new vm.Script(fs.readFileSync(path.join(root, 'assets', name), 'utf8'));
   const dc = TE.run2D(model()), ac = TE.run2D(model(true));
   await check('DC / AC numerical smoke tests and imported-result dimensions', () => {
-    assert(Math.abs(dc.terminalVoltage + .002) < 1e-12);
-    assert(Math.abs(ac.harmonics.terminalVoltage[1].re + .002) < 1e-12);
+    assert(Math.abs(dc.terminalVoltage - .002) < 1e-12);
+    assert(Math.abs(ac.harmonics.terminalVoltage[1].re - .002) < 1e-12);
     TE.checkProjectResult(dc); TE.checkProjectResult(ac);
+  });
+  await check('Passive sign convention: sink grounded, U = V(source) − V(sink), U = RI and P = UI', () => {
+    // model(): source on the left edge (nodes 0, 5), sink on the right edge (nodes 4, 9), R = 0.01 Ω.
+    for (const i of [4, 9]) assert.equal(dc.voltage[i], 0);
+    for (const i of [0, 5]) assert.equal(dc.voltage[i], dc.terminalVoltage);
+    assert(Math.abs(dc.current - .2) < 1e-15 && Math.abs(dc.electricalPower - 4e-4) < 1e-15);
+    assert.equal(dc.electricalPower, dc.current * dc.terminalVoltage); assert(Math.abs(dc.energyResidual) < 1e-10);
+    const v = model(); v.electrical = {...v.electrical, kind: 'voltage', value: {bias: .002, amplitude: 0, phase: 0}};
+    const rv = TE.run2D(v); assert.equal(rv.terminalVoltage, .002); assert(Math.abs(rv.current - .2) < 1e-12);
+    const o = model(); o.electrical = {...o.electrical, kind: 'open_circuit'}; assert(Math.abs(TE.run2D(o).current) < 1e-15);
+  });
+  await check('Ideal Peltier leg reproduces the analytic cooler solution', () => {
+    // p-leg from a 300 K heat sink (sink electrode, left) to an insulated cold end (source electrode, right):
+    // Tc = (K·Th + I²R/2) / (K + αI) and U = IR + α(Th − Tc). Implicit Peltier cooling needs few iterations.
+    const I = 3, a = 2e-4, K = 1.6e-6 / 1.6e-3, R = 1.6e-3 / (1.1e5 * 1e-6), flux = () => ({kind: 'flux', value: 0});
+    const c = TE.default2D(); Object.assign(c, {mode: 'steady', nx: 16, ny: 1, lx: 1.6e-3, ly: 1e-3, depth: 1e-3, materialMap: Array(16).fill(0)});
+    c.materials = [{name: 'p-leg', color: '#73d8d0', rho: 7740, Cp: 154.4, k: 1.6, sigma: 1.1e5, alpha: a, beta: 0, alphaSlope: 0}];
+    c.thermal = {left: {kind: 'temperature', value: 300}, right: flux(), top: flux(), bottom: flux()};
+    c.electrical = {kind: 'current', value: {bias: I, amplitude: 0, phase: 0}, sourceSide: 'right', sinkSide: 'left', sourceRange: [0, 1], sinkRange: [0, 1]};
+    const r = TE.run2D(c), Tc = (K * 300 + I * I * R / 2) / (K + a * I);
+    for (const i of [16, 33]) assert(Math.abs(r.temperature[i] - Tc) < 1e-8);
+    assert(Math.abs(r.terminalVoltage - (I * R + a * (300 - Tc))) < 1e-12);
+    assert(Math.abs(r.energyResidual) < 1e-9 && r.diagnostics.iterations <= 5);
+  });
+  await check('Thermoelectric module example converges beyond its optimum current', async () => {
+    const module = await app.moduleConfig(); // lib/ is not served here: built-in material copies
+    const top = I => {
+      const c = structuredClone(module); c.electrical.value.bias = I; const r = TE.run2D(c);
+      assert(r.diagnostics.iterations <= 10 && Math.abs(r.energyResidual) < 1e-6 && r.terminalVoltage > 0);
+      return Math.min(...r.temperature.slice(-(c.nx + 1)));
+    };
+    const t4 = top(4), t12 = top(12);
+    assert(t4 < 240 && t12 > t4 && t12 < 300, `top plate ${t4} K at 4 A, ${t12} K at 12 A`);
   });
   await check('Generated worker executes and decodes', () => {
     let message; const context = {self: {postMessage: m => {if (m.type === 'result' || m.type === 'error') message = structuredClone(m);}}};
@@ -76,6 +109,13 @@ async function check(label, fn) {await fn(); checks++; console.log('PASS', label
     const old = el('dcProbe').textContent; app.probe = 0; app.drawResults(); assert.notEqual(el('dcProbe').textContent, old);
     app.result = ac; setView(); app.drawResults(); assert.equal(el('dcProbe').hidden, true);
   });
+  await check('Colour scales of nodal fields span the nodal extremes', () => {
+    const map = TE.harmonicMap(dc, 'temperature', 0);
+    assert.equal(map.range.lo, 300); assert(Math.min(...map.values) > 300);
+    assert.equal(map.range.hi, Math.max(...dc.temperature)); assert.deepEqual(TE.surfaceField(dc, 'temperature').range, map.range);
+    app.result = dc; setView(); app.drawResults(); assert.equal(el('scaleMin').textContent, '300');
+    assert.deepEqual(TE.harmonicMap(ac, 'temperature', 1, 'phase').range, {lo: -180, hi: 180});
+  });
   await check('Sweep selection preserves harmonic, probe, representation and time fraction', () => {
     app.result = ac; setView(); const second = structuredClone(ac); second.frequency = 4; second.config.frequency = 4;
     app.sweepResult = {results: [ac, second]}; app.selectSweepPoint(1);
@@ -88,8 +128,14 @@ async function check(label, fn) {await fn(); checks++; console.log('PASS', label
     assert(acFiles.some(f => f.name === 'figures/temperature-1-imaginary.svg'));
     assert(acFiles.find(f => f.name === 'report.html').data.includes('Complex nodal phasors are averaged'));
   });
+  await check('Exports state the sign convention and the cycle diagnostics', () => {
+    const report = acFiles.find(f => f.name === 'report.html').data, readme = acFiles.find(f => f.name === 'README.txt').data;
+    assert(report.includes('terminal voltage U = V(source) − V(sink)') && report.includes('Cycle extrapolations') && report.includes('Terminal voltage tolerance (V)'));
+    assert(readme.includes('Terminal voltage U = V(source) - V(sink)') && ac.convention.includes('V(source)-V(sink)'));
+    assert.equal(JSON.parse(acFiles.find(f => f.name === 'manifest.json').data).formatVersion, 2);
+  });
   const metadataFile = (kind = 'single', selectedIndex = 0, probe = 2) => ({name: 'project.json', data: JSON.stringify({
-    format: 'thermoelectric-lab-project', version: 1, kind, selectedIndex, view: {probe}, bodeOptions: kind === 'sweep' ? bode : null
+    format: 'thermoelectric-lab-project', version: TE.projectVersion, kind, selectedIndex, view: {probe}, bodeOptions: kind === 'sweep' ? bode : null
   })});
   await check('DC and AC project ZIPs restore exact data and probe', async () => {
     for (const [r, files, probe] of [[dc, dcFiles, 2], [ac, acFiles, 7]]) {
@@ -106,6 +152,34 @@ async function check(label, fn) {await fn(); checks++; console.log('PASS', label
     const stopped = {...sweep, results: [results[0]], status: 'stopped'};
     const loadedStopped = await TE.readProjectZip(await TE.zipFiles([...await app.sweepFiles(stopped, bode, results[0], 7), metadataFile('sweep', 0, 7)]));
     assert.equal(loadedStopped.sweep.results.length, 1); assert.equal(loadedStopped.sweep.status, 'stopped');
+  });
+  await check('Impedance is U/I with no phase correction', () => {
+    for (const row of TE.bodeRows(results, {quantity: 'impedance'})) assert(Math.abs(row.magnitude - .01) < 1e-12 && Math.abs(row.phase) < 1e-9);
+    for (const row of TE.bodeRows(results, {quantity: 'terminalVoltage', reference: 'current'})) assert(Math.abs(row.phase) < 1e-9);
+  });
+  const rc = {...await app.rcConfig(), sweep: {enabled: false}, frequency: 30};
+  let rcRun;
+  await check('Cycle extrapolation reaches the same periodic state in far fewer cycles', () => {
+    const run = extrapolate => TE.from2DConfig(rc).solvePeriodic(30, {samples: 32, maxPeriods: 400, extrapolate});
+    const fast = run(true), plain = run(false), a = fast.harmonics.terminalVoltage[1], b = plain.harmonics.terminalVoltage[1];
+    assert(fast.periods <= 10 && plain.periods >= 50, `${fast.periods} vs ${plain.periods} cycles`);
+    assert(fast.diagnostics.cycleExtrapolations >= 1 && plain.diagnostics.cycleExtrapolations === 0);
+    assert(Math.hypot(a.re - b.re, a.im - b.im) / Math.hypot(b.re, b.im) < 1e-6);
+    rcRun = TE.run2D(rc); // the application's path extrapolates by default
+    assert(rcRun.converged && rcRun.periods <= 10 && rcRun.diagnostics.cycleExtrapolations >= 1, `run2D: ${rcRun.periods} cycles`);
+    assert.deepEqual(TE.cycleExtrapolation([[0, 0], [1, 2], [1.5, 3]]).shift, [.5, 1]); // λ = 1/2: limit (2, 4)
+    assert.equal(TE.cycleExtrapolation([[0], [1], [.5]]), null); // oscillating drift
+    assert.equal(TE.cycleExtrapolation([[0], [1], [1.999]]), null); // λ ≥ 0.995: no reliable limit
+    assert.equal(TE.cycleExtrapolation([[0, 0], [1, 0], [1, .5]]), null); // drift changes direction
+  });
+  await check('No extrapolation without a periodic state', () => {
+    const c = model(true); c.maxPeriods = 10; for (const side of ['left', 'right', 'top', 'bottom']) c.thermal[side] = {kind: 'flux', value: 0};
+    let last; assert.throws(() => TE.run2D(c, noop, r => {last = r;}), /Periodic state not reached/); // adiabatic: Joule heat accumulates
+    assert.equal(last.periods, 10); assert.equal(last.diagnostics.cycleExtrapolations, 0);
+  });
+  await check('Terminal-voltage tolerance follows the largest Seebeck coefficient', () => {
+    assert.equal(ac.diagnostics.harmonicVoltageAtol, 1e-12); // α = 0: floor
+    assert(Math.abs(rcRun.diagnostics.harmonicVoltageAtol - 2e-4 * 2e-7) < 1e-25); // Bi₂Te₃ × temperature tolerance
   });
   await check('Archives without project.json are rejected for DC, AC and sweeps', async () => {
     for (const files of [dcFiles, acFiles, sweepFiles]) {
@@ -138,6 +212,16 @@ async function check(label, fn) {await fn(); checks++; console.log('PASS', label
     assert.equal(app.result, before); assert.equal(app.importingProject, false); assert(el('status').textContent.startsWith('Project import failed:'));
   });
   const minimal = r => [metadataFile(), {name: 'model.json', data: JSON.stringify(r.config)}, {name: 'results.json', data: JSON.stringify(r)}];
+  await check('Only the current model and project versions are accepted', async () => {
+    assert.equal(TE.default2D().version, TE.modelVersion);
+    for (const bad of [{...model(), version: 1}, (({version, ...rest}) => rest)(model())]) assert.throws(() => TE.checkEditorModel(bad), /Unsupported model version/);
+    const oldMetadata = {name: 'project.json', data: JSON.stringify({format: 'thermoelectric-lab-project', version: 1, kind: 'single', selectedIndex: 0, view: {probe: 2}, bodeOptions: null})};
+    await assert.rejects(() => TE.zipFiles([oldMetadata, ...minimal(dc).slice(1)]).then(TE.readProjectZip), /Unsupported project/);
+    const oldModel = structuredClone(dc); oldModel.config.version = 1;
+    await assert.rejects(() => TE.zipFiles(minimal(oldModel)).then(TE.readProjectZip), /Unsupported model version/);
+    el('file').files = [new Blob([JSON.stringify({...model(), version: 1})])]; await app.importModel();
+    assert(el('status').textContent.startsWith('Import failed: Unsupported model version'));
+  });
   await check('Malformed arrays, metadata, JSON properties and unknown boundary rejected', async () => {
     const bad = structuredClone(ac); bad.temperature[0].pop();
     await assert.rejects(() => TE.zipFiles(minimal(bad)).then(TE.readProjectZip), /dimensions/);
@@ -182,6 +266,10 @@ async function check(label, fn) {await fn(); checks++; console.log('PASS', label
       for (const m of code.matchAll(/app\.\$\('([^']+)'\)/g)) assert(ids.includes(m[1]), 'Missing HTML ID ' + m[1]);
     }
     assert(html.indexOf('id="importProject"') < html.indexOf('id="import"'));
+  });
+  await check('Solver-tab equations match the shared report guide', () => {
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    for (const section of TE.equationGuide) for (const [, p] of section.html.matchAll(/<p>(.*?)<\/p>/g)) assert(html.includes(p), 'index.html differs: ' + p.slice(0, 60));
   });
   console.log(`\n${checks} regression checks passed.`);
 })().catch(e => {console.error(e); process.exitCode = 1;});

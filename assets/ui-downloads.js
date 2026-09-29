@@ -54,7 +54,7 @@
     }
     files.push({
       name: 'README.txt',
-      data: 'Frequency sweep results. Each frequency-NNN folder contains the complete model, all field histories, harmonics, CSV, SVG and printable report for that point. Root report.html contains the Bode summary and the selected frequency detailed report. bode.csv records physical magnitudes and the selected phase/normalization settings are in sweep-status.json. Only the last complete cycle per frequency is retained. Unconverged cycles are retained but excluded from Bode. Requested but uncomputed frequencies are recorded in sweep-status.json.\n'
+      data: 'Frequency sweep results. Each frequency-NNN folder contains the complete model, all field histories, harmonics, CSV, SVG and printable report for that point. Root report.html contains the Bode summary and the selected frequency detailed report. bode.csv records physical magnitudes and the selected phase/normalization settings are in sweep-status.json. Only the last complete cycle per frequency is retained. Unconverged cycles are retained but excluded from Bode. Requested but uncomputed frequencies are recorded in sweep-status.json. Terminal voltage U = V(source) - V(sink), with the sink at 0 V and positive current entering the source; impedance = U/I at the fundamental.\n'
     });
     return files;
   };
@@ -116,7 +116,7 @@
         probe: savedProbe
       });
       files.push({name: 'project.json', data: JSON.stringify({
-        format: 'thermoelectric-lab-project', version: 1,
+        format: 'thermoelectric-lab-project', version: TE.projectVersion,
         kind: savedSweep ? 'sweep' : 'single',
         selectedIndex: savedSweep ? savedSweep.results.indexOf(saved) : 0,
         view: savedView, bodeOptions: savedOptions

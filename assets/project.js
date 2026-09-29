@@ -16,7 +16,10 @@
     const keys = Object.keys(a);
     return keys.length === Object.keys(b).length && keys.every(k => Object.hasOwn(b, k) && same(a[k], b[k]));
   };
+  // Project file format version written by exports and required on import.
+  TE.projectVersion = 2;
   TE.checkEditorModel = c => {
+    assert(object(c) && c.version === TE.modelVersion, `Unsupported model version: expected "version": ${TE.modelVersion}.`);
     TE.assertValid2DConfig(c);
     assert(c.materials.every(m => ['rho', 'Cp', 'k', 'sigma', 'alpha'].every(k => typeof m[k] === 'number')), 'The editor requires scalar material reference values.');
     assert([64, 128, 256, 512, 1024].includes(c.samples), 'Unsupported editor time-step count.');
@@ -143,9 +146,9 @@
         return JSON.parse(text.decode(bytes), (key, value) => { assert(!['__proto__', 'constructor', 'prototype'].includes(key), 'Unsafe JSON property.'); return value; });
       } catch (error) { throw new Error('Invalid project JSON in ' + name + ': ' + error.message); }
     };
-    assert(entries.has('project.json'), 'This ZIP is not a supported project. Export a project ZIP with update 13 or later.');
+    assert(entries.has('project.json'), 'This ZIP is not a supported project: project.json is missing. Save projects with Save project / complete results ZIP.');
     const metadata = await read('project.json');
-    assert(object(metadata) && metadata.format === 'thermoelectric-lab-project' && metadata.version === 1 && ['single', 'sweep'].includes(metadata.kind), 'Unsupported project format/version.');
+    assert(object(metadata) && metadata.format === 'thermoelectric-lab-project' && metadata.version === TE.projectVersion && ['single', 'sweep'].includes(metadata.kind), 'Unsupported project format/version.');
     const isSweep = metadata.kind === 'sweep';
     assert(isSweep === entries.has('sweep-model.json'), 'Project kind disagrees with archive data.');
     let result, sweep = null, selected = metadata.selectedIndex;

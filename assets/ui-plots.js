@@ -185,7 +185,8 @@
     const nodeField = field === 'temperature' || field === 'voltage',
       isPhase = n && representation === 'phase' && field !== 'J',
       unit = isPhase ? '°' : field === 'temperature' ? 'K' : field === 'voltage' ? 'V' : ['qx', 'qy'].includes(field) ? 'W/m²' : 'A/m²';
-    const lo = isPhase ? -180 : Math.min(...values), hi = isPhase ? 180 : Math.max(...values);
+    // Nodal fields: the scale spans the nodal extremes, which cell averages never reach.
+    const lo = isPhase ? -180 : map.range.lo, hi = isPhase ? 180 : map.range.hi;
     const phaseMap = isPhase ? map : null;
     const f = app.canvasFrame('resultCanvas', c);
     app.resultFrame = f;
@@ -251,7 +252,7 @@
     app.$('scaleMin').textContent = TE.formatInputNumber(lo);
     app.$('scaleMax').textContent = TE.formatInputNumber(hi);
     app.$('scaleUnit').textContent = unit;
-    app.$('fieldCaption').textContent = `${app.$('field').selectedOptions[0].text} · ${n ? n + 'ω' : 'DC'}${n ? ' · ' + (field === 'J' ? 'vector amplitude' : representation) : ''} · ${nodeField ? 'complex phasors averaged per cell' : 'cell-centered field'}${isPhase ? ` · gray: ${phaseMap.masked} cells at/below ${app.fmt(phaseMap.threshold)} field units` : ''}`;
+    app.$('fieldCaption').textContent = `${app.$('field').selectedOptions[0].text} · ${n ? n + 'ω' : 'DC'}${n ? ' · ' + (field === 'J' ? 'vector amplitude' : representation) : ''} · ${nodeField ? 'complex phasors averaged per cell; scale spans nodal values' : 'cell-centered field'}${isPhase ? ` · gray: ${phaseMap.masked} cells at/below ${app.fmt(phaseMap.threshold)} field units` : ''}`;
     app.$('vectorNote').textContent = `Arrows: real current phasor at 0° (direction and relative magnitude). ${globalThis.TETheme && document.documentElement.dataset.theme === 'light' ? 'Dark blue' : 'White'} = source electrode; magenta = sink. Click to move the probe. Vectors below 1E-8 of the strongest current harmonic (or 1E-12 A/m²) are hidden to avoid magnifying numerical noise.`;
     app.$('probeLabel').textContent = `x = ${app.fmt(pi * c.lx / c.nx * 1000)} mm, y = ${app.fmt(pj * c.ly / c.ny * 1000)} mm`;
     app.$('dcProbe').hidden = periodic;
@@ -261,7 +262,7 @@
       const thermal = TE.historyForPlot(r, r.temperature.map(T => T[app.probe])),
         electric = TE.historyForPlot(r, r.terminalVoltage.map(v => v * 1000));
       app.chart('probeChart', thermal.time, thermal.values, 'Temperature · K');
-      app.chart('voltageChart', electric.time, electric.values, 'Voltage · mV');
+      app.chart('voltageChart', electric.time, electric.values, 'Terminal voltage · mV');
     } else {
       app.$('probeChart').textContent = `Steady temperature: ${r.temperature[app.probe].toFixed(6)} K`;
       app.$('voltageChart').textContent = `Steady terminal voltage: ${r.terminalVoltage.toExponential(6)} V`;
@@ -277,8 +278,8 @@
     const sample = periodic ? Number(app.$('profileTime').value) : 0,
       field = app.$('profileField').value,
       surface = TE.surfaceField(r, field, sample),
-      lo = Math.min(...surface.cells),
-      hi = Math.max(...surface.cells),
+      lo = surface.range.lo,
+      hi = surface.range.hi,
       f = app.canvasFrame('profileCanvas', c),
       {
         ctx,
@@ -296,6 +297,6 @@
     app.$('surfaceMin').textContent = TE.formatInputNumber(lo);
     app.$('surfaceMax').textContent = TE.formatInputNumber(hi);
     app.$('surfaceUnit').textContent = surface.unit;
-    app.$('profileCaption').textContent = (periodic ? `t = ${app.fmt(r.time[sample] * 1000)} ms · phase ${app.fmt(360 * r.frequency * r.time[sample])}° · sample ${sample + 1}/${r.samples}` : 'DC stationary') + ` · ${surface.nodal ? 'complex phasors averaged per cell' : 'cell-centered values'}` + (r.converged ? '' : ' · UNCONVERGED');
+    app.$('profileCaption').textContent = (periodic ? `t = ${app.fmt(r.time[sample] * 1000)} ms · phase ${app.fmt(360 * r.frequency * r.time[sample])}° · sample ${sample + 1}/${r.samples}` : 'DC stationary') + ` · ${surface.nodal ? 'nodal values averaged per cell; scale spans nodal values' : 'cell-centered values'}` + (r.converged ? '' : ' · UNCONVERGED');
   };
 })(globalThis.TEApp);
