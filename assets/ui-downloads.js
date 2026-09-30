@@ -68,11 +68,39 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  app.exportModel = () => {
+  app.projectFileName = () => {
+    const now = new Date(),
+      pad = value => String(value).padStart(2, '0'),
+      date = [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('-'),
+      time = [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join('-');
+    return `TE_2D_${date}_${time}.zip`;
+  };
+  // Save project is always available. When the displayed results belong to the current inputs it saves
+  // the complete project; otherwise (nothing computed, or inputs edited since) the model and settings only.
+  app.saveProject = () => app.result && !app.inputsChanged ? app.exportZip() : app.exportModelProject();
+  app.exportModelProject = async () => {
+    if (app.exporting || app.importingProject || app.worker) return;
+    app.exporting = true;
     try {
-      app.download('thermoelectric-2d-model.json', JSON.stringify(app.applyGeometry(), null, 2));
+      const model = TE.checkEditorModel(JSON.parse(JSON.stringify(app.applyGeometry())));
+      const zip = await TE.zipFiles([{
+        name: 'project.json',
+        data: JSON.stringify({format: 'thermoelectric-lab-project', version: TE.projectVersion, kind: 'model'}, null, 2)
+      }, {
+        name: 'model.json',
+        data: JSON.stringify(model, null, 2)
+      }, {
+        name: 'README.txt',
+        data: 'Thermoelectric Lab project without results: model, materials, boundary conditions and solver settings.\nOpen it with Import project and run it.\n'
+      }]);
+      app.download(app.projectFileName(), zip, 'application/zip');
+      app.$('status').textContent = app.result
+        ? 'Project saved without results: the inputs changed after the last run, so only the current model and settings were saved.'
+        : 'Project saved without results: the model and all settings. Import project opens it ready to run.';
     } catch (e) {
-      app.notice(e.message, true);
+      app.notice('Save failed: ' + e.message, true);
+    } finally {
+      app.exporting = false;
     }
   };
   app.exportPdf = () => {
@@ -124,19 +152,17 @@
       const manifest = files.find(f => f.name === 'manifest.json');
       if (manifest) { const data = JSON.parse(manifest.data); data.files.push('project.json'); manifest.data = JSON.stringify(data, null, 2); }
       const readme = files.find(f => f.name === 'README.txt');
-      if (readme) readme.data += '\nReopen this ZIP using Import Project in Thermoelectric Lab. It restores the saved model, all retained results, and the selected view. No recalculation is required.\n';
+      if (readme) readme.data += '\nReopen this ZIP using Import project in Thermoelectric Lab. It restores the saved model, all retained results, and the selected view. No recalculation is required.\n';
       const jsonBytes = files.filter(f => f.name.endsWith('.json')).reduce((sum, f) => sum + new Blob([f.data]).size, 0);
       TE.assert(jsonBytes <= TE.projectLimits.jsonBytes, 'Project JSON exceeds the import limit. Reduce retained sweep points or time steps.');
       const zip = await TE.zipFiles(files);
       TE.assert(zip.size <= TE.projectLimits.archiveBytes, 'Project ZIP exceeds the 2 GiB import limit. Reduce retained sweep points or time steps.');
-      const now = new Date(),
-        pad = value => String(value).padStart(2, '0'),
-        date = [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('-'),
-        time = [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join('-');
-      app.download(`TE_2D_${date}_${time}.zip`, zip, 'application/zip');
-      app.$('exportStatus').textContent = 'Project ZIP downloaded. Use Import Project to reopen the model, saved results and view. Reports, SVG figures and CSV data are also included.';
+      app.download(app.projectFileName(), zip, 'application/zip');
+      app.$('exportStatus').textContent = 'Project ZIP downloaded. Use Import project to reopen the model, saved results and view. Reports, SVG figures and CSV data are also included.';
+      app.$('status').textContent = 'Project saved with its results. Import project reopens it without recalculation.';
     } catch (e) {
       app.$('exportStatus').textContent = 'ZIP export failed: ' + e.message;
+      app.$('status').textContent = 'Project save failed: ' + e.message;
     } finally {
       app.exporting = false;
       app.$('exportZip').disabled = app.$('exportMenuButton').disabled;

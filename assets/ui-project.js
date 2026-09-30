@@ -45,10 +45,22 @@
     try {
       // Parse and validate everything before replacing the current model/results.
       const project = await TE.readProjectZip(file);
+      if (!project.result) TE.from2DConfig(project.config); // a model-only project must also build a solver
       app.config = JSON.parse(JSON.stringify(project.config));
       app.selected = 0;
       app.checkpoint = null;
       app.activeSweep = null;
+      if (!project.result) {
+        // Project without results (like an example): load the model and settings, ready to run.
+        app.config.materials.forEach(m => { if (!/^#[0-9a-f]{6}$/i.test(m.color)) m.color = '#73d8d0'; });
+        app.fill();
+        app.clearResults('No results yet: this project holds the model only. Run it to compute the response.');
+        app.$('elapsed').textContent = '';
+        app.notice('Imported project without results. Run it to compute its response.');
+        app.showPreset('custom');
+        app.tab('geometry');
+        return;
+      }
       app.sweepResult = project.sweep;
       app.fill();
       app.restoreBodeOptions(project.bodeOptions);
@@ -66,6 +78,7 @@
       app.$('status').textContent = project.sweep
         ? `Imported project: ${project.sweep.results.length}/${project.sweep.frequencies.length} frequency points retained (${project.sweep.status}). Saved results are ready to inspect and export.`
         : `Imported project. ${project.result.converged ? 'Converged' : 'Unconverged, provisional'} saved results are ready to inspect and export.`;
+      app.showPreset('custom');
     } catch (error) {
       app.notice('Project import failed: ' + error.message, true);
     } finally {

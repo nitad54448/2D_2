@@ -302,7 +302,7 @@
       const g = app.geometryInput(),
         valid = Number.isInteger(g.nx) && Number.isInteger(g.ny) && g.nx >= 2 && g.ny >= 1;
       app.$('meshSummary').textContent = valid ? `${g.nx} × ${g.ny} = ${g.nx * g.ny} elements / ${(g.nx + 1) * (g.ny + 1)} nodes` : 'Enter whole-number counts: Nx ≥ 2 and Ny ≥ 1.';
-      app.$('meshPending').textContent = valid && (g.nx + 1) * (g.ny + 1) > 1600 ? 'Too large: maximum 1600 nodes.' : app.meshChanged(g) ? 'Pending change — Apply mesh, Run simulation or Export model will apply it.' : 'Mesh is up to date.';
+      app.$('meshPending').textContent = valid && (g.nx + 1) * (g.ny + 1) > 1600 ? 'Too large: maximum 1600 nodes.' : app.meshChanged(g) ? 'Pending change — Apply mesh, Run simulation or Save project will apply it.' : 'Mesh is up to date.';
     } catch {
       app.$('meshSummary').textContent = 'Enter valid dimensions and element counts.';
       app.$('meshPending').textContent = '';
@@ -428,31 +428,6 @@
       input.value = '';
     }
   };
-  app.importModel = async () => {
-    const f = app.$('file').files[0];
-    if (!f) return;
-    try {
-      TE.assert(f.size < 2e6, 'Model JSON must be <2 MB.');
-      const c = JSON.parse(await f.text());
-      TE.checkEditorModel(c);
-      TE.from2DConfig(c);
-      if (c.sweep?.enabled) TE.validateSweep(c);
-      TE.assert(c.materials.every(m => ['rho', 'Cp', 'k', 'sigma', 'alpha'].every(k => typeof m[k] === 'number')), 'The editor imports scalar reference laws only.');
-      TE.assert([64, 128, 256, 512, 1024].includes(c.samples), 'Unsupported GUI step count.');
-      c.materials.forEach(m => {
-        if (!/^#[0-9a-f]{6}$/i.test(m.color)) m.color = '#73d8d0';
-      });
-      app.config = c;
-      app.selected = 0;
-      app.fill();
-      app.dirty();
-      app.notice('Model imported. Run to compute its response.');
-    } catch (e) {
-      app.notice('Import failed: ' + e.message, true);
-    } finally {
-      app.$('file').value = '';
-    }
-  };
   // Thermoelectric module example: one n/p Bi2Te3 couple between alumina plates, cut through the
   // middle of the legs. Cells are 0.2 mm (x) × 0.1 mm (y): legs 1.4 × 1.6 mm, copper 0.3 mm,
   // alumina 0.6 mm, air gap 1 mm. Material indices: 0 p, 1 n, 2 copper, 3 alumina, 4 air.
@@ -570,6 +545,12 @@
       sweep: {enabled: true, min: .003, max: 30, points: 13, spacing: 'log'}
     };
   };
+  // The Example selector names the loaded example until the model changes; then it shows Custom
+  // (a status-only entry). Choosing any example, including the same one, loads it again.
+  app.showPreset = value => {
+    app.presetShown = value;
+    app.$('preset').value = value;
+  };
   app.loadPreset = async () => {
     const token = ++app.presetToken,
       p = app.$('preset').value,
@@ -578,18 +559,24 @@
       try {
         const config = await build();
         // Ignore a slow library load if another preset, a run or an import started meanwhile.
-        if (token !== app.presetToken || app.worker || app.importingProject) return;
+        if (token !== app.presetToken) return;
+        if (app.worker || app.importingProject) {
+          app.$('preset').value = app.presetShown;
+          return;
+        }
         TE.assertValid2DConfig(config);
         app.config = config;
         app.selected = 0;
         app.fill();
         app.dirty();
+        app.showPreset(p);
         // The RC example is about the terminal impedance: show it as Real/Imaginary parts.
         if (p === 'rc') {
           app.$('bodeQuantity').value = 'impedance';
           app.$('bodeRepresentation').value = 'complex';
         }
       } catch (e) {
+        app.$('preset').value = app.presetShown;
         app.notice('Could not load the example: ' + e.message, true);
       }
       return;
@@ -647,5 +634,6 @@
     }
     app.fill();
     app.dirty();
+    app.showPreset(p);
   };
 })(globalThis.TEApp);

@@ -593,13 +593,19 @@
           //   I = Σ I_k (u_a - u_b)  ⇒  Iunit = Σ g(Δu)²,  Ibase = -Σ g·s·Δu.
           // Warm starts from the previous solutions (same electrodes, slowly varying conductances)
           // reach the unchanged CG tolerance in fewer iterations than a start from zero.
-          const base = TE.graphSolve(m, g, zero, rhs, fixed, this.lastBase ? {
-            initial: this.lastBase
-          } : undefined);
+          // Validation keeps electrodes on conductors; this message covers any remaining unresolvable contrast.
+          const solve = (source, initial) => {
+            try {
+              return TE.graphSolve(m, g, zero, source, fixed, initial ? {
+                initial
+              } : undefined);
+            } catch (error) {
+              throw new Error(`Electrical solve failed (${error.message}) Current must cross material that is far too insulating compared with the conductors (contrast beyond about 1E15), for example an electrode placed on an insulator. Move the electrode onto a conductor or raise the insulator conductivity.`);
+            }
+          };
+          const base = solve(rhs, this.lastBase);
           this.source.forEach(i => fixed.set(i, 1));
-          const unit = TE.graphSolve(m, g, zero, zero, fixed, this.lastUnit ? {
-            initial: this.lastUnit
-          } : undefined);
+          const unit = solve(zero, this.lastUnit);
           this.lastBase = base;
           this.lastUnit = unit;
           let Iunit = 0,
@@ -1278,6 +1284,28 @@
               add('electrical.sinkRange', 'Source and sink electrodes must not overlap.');
             }
           }
+          // Each electrode must touch conducting material. Forcing current through a near-insulator next
+          // to good conductors (contrast beyond ~1E15) cannot be resolved in double precision.
+          if (contacts.source && contacts.sink && Array.isArray(mats) && Array.isArray(c.materialMap) && !errors.some(e => e.path.startsWith('materials') || e.path === 'materialMap')) {
+            const sigma = mats.map(m => {
+              try {
+                const v = typeof m.sigma === 'number' ? m.sigma : TE.law(m.sigma, 300);
+                return Number.isFinite(v) && v > 0 ? v : NaN;
+              } catch {
+                return NaN;
+              }
+            });
+            const best = Math.max(...new Set(c.materialMap.map(id => sigma[id])));
+            for (const name of ['source', 'sink']) {
+              let touching = 0;
+              for (const node of contacts[name]) {
+                const i = node % (c.nx + 1),
+                  j = Math.floor(node / (c.nx + 1));
+                for (const jj of [j - 1, j]) for (const ii of [i - 1, i]) if (ii >= 0 && jj >= 0 && ii < c.nx && jj < c.ny) touching = Math.max(touching, sigma[c.materialMap[jj * c.nx + ii]]);
+              }
+              if (Number.isFinite(best) && touching < 1e-14 * best) add('electrical.' + name + 'Range', `The ${name} electrode touches only near-insulating material (σ ≤ ${touching.toPrecision(3)} S/m, against ${best.toPrecision(3)} S/m elsewhere). Place it on a conductor.`);
+            }
+          }
         }
         return errors;
       };
@@ -1858,6 +1886,18 @@
         const values = TE.cellPhasors(r, key, n).map(pick);
         const nodes = ['temperature', 'voltage'].includes(key) ? (r.method === 'steady' ? r[key].map(re => ({re, im: 0})) : r.harmonics[key][n]).map(pick) : [];
         return {values, range: TE.valueRange(values, nodes)};
+      };
+      // Complex value of a field at a probe node (steady results are real). Nodal fields use the node
+      // itself; cell fields use the mean of the 1, 2 or 4 cells that share the node.
+      TE.probePhasor = (r, key, n, probe) => {
+        const c = r.config, values = r.method === 'steady' ? r[key].map(re => ({re, im: 0})) : r.harmonics[key][n];
+        if (['temperature', 'voltage'].includes(key)) return values[probe];
+        const i = probe % (c.nx + 1), j = Math.floor(probe / (c.nx + 1)), cells = [];
+        for (const jj of [j - 1, j]) for (const ii of [i - 1, i]) if (ii >= 0 && jj >= 0 && ii < c.nx && jj < c.ny) cells.push(values[jj * c.nx + ii]);
+        return {
+          re: cells.reduce((s, z) => s + z.re, 0) / cells.length,
+          im: cells.reduce((s, z) => s + z.im, 0) / cells.length
+        };
       };
       TE.phaseMap = (r, key, n, {
         relative = TE.phaseMapSettings.relative,

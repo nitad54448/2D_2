@@ -146,9 +146,14 @@
         return JSON.parse(text.decode(bytes), (key, value) => { assert(!['__proto__', 'constructor', 'prototype'].includes(key), 'Unsafe JSON property.'); return value; });
       } catch (error) { throw new Error('Invalid project JSON in ' + name + ': ' + error.message); }
     };
-    assert(entries.has('project.json'), 'This ZIP is not a supported project: project.json is missing. Save projects with Save project / complete results ZIP.');
+    assert(entries.has('project.json'), 'This ZIP is not a supported project: project.json is missing. Save projects with Save project.');
     const metadata = await read('project.json');
-    assert(object(metadata) && metadata.format === 'thermoelectric-lab-project' && metadata.version === TE.projectVersion && ['single', 'sweep'].includes(metadata.kind), 'Unsupported project format/version.');
+    assert(object(metadata) && metadata.format === 'thermoelectric-lab-project' && metadata.version === TE.projectVersion && ['model', 'single', 'sweep'].includes(metadata.kind), 'Unsupported project format/version.');
+    if (metadata.kind === 'model') {
+      // Project without results: the model, materials, boundaries and solver settings, ready to run.
+      assert(!entries.has('results.json') && !entries.has('sweep-model.json'), 'Project kind disagrees with archive data.');
+      return {config: TE.checkEditorModel(await read('model.json')), result: null, sweep: null, selected: 0, view: null, bodeOptions: null};
+    }
     const isSweep = metadata.kind === 'sweep';
     assert(isSweep === entries.has('sweep-model.json'), 'Project kind disagrees with archive data.');
     let result, sweep = null, selected = metadata.selectedIndex;

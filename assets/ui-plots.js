@@ -255,8 +255,22 @@
     app.$('fieldCaption').textContent = `${app.$('field').selectedOptions[0].text} · ${n ? n + 'ω' : 'DC'}${n ? ' · ' + (field === 'J' ? 'vector amplitude' : representation) : ''} · ${nodeField ? 'complex phasors averaged per cell; scale spans nodal values' : 'cell-centered field'}${isPhase ? ` · gray: ${phaseMap.masked} cells at/below ${app.fmt(phaseMap.threshold)} field units` : ''}`;
     app.$('vectorNote').textContent = `Arrows: real current phasor at 0° (direction and relative magnitude). ${globalThis.TETheme && document.documentElement.dataset.theme === 'light' ? 'Dark blue' : 'White'} = source electrode; magenta = sink. Click to move the probe. Vectors below 1E-8 of the strongest current harmonic (or 1E-12 A/m²) are hidden to avoid magnifying numerical noise.`;
     app.$('probeLabel').textContent = `x = ${app.fmt(pi * c.lx / c.nx * 1000)} mm, y = ${app.fmt(pj * c.ly / c.ny * 1000)} mm`;
-    app.$('dcProbe').hidden = periodic;
-    app.$('dcProbe').textContent = periodic ? '' : `Probe: x = ${app.fmt(r.mesh.x[app.probe] * 1000)} mm, y = ${app.fmt(r.mesh.y[app.probe] * 1000)} mm · T = ${TE.formatInputNumber(r.temperature[app.probe])} K · V = ${TE.formatInputNumber(r.voltage[app.probe])} V`;
+    // Probe readout under the map: the displayed field at the probe (same harmonic and representation);
+    // DC results also list temperature and potential there.
+    let probeValue;
+    if (field === 'J') {
+      const x = TE.probePhasor(r, 'Jx', n, app.probe), y = TE.probePhasor(r, 'Jy', n, app.probe);
+      probeValue = Math.hypot(x.re, x.im, y.re, y.im);
+    } else {
+      const z = TE.probePhasor(r, field, n, app.probe);
+      probeValue = !n || representation === 'real' ? z.re : representation === 'imaginary' ? z.im
+        : representation === 'phase' ? (app.amp(z) > phaseMap.threshold ? app.phase(z) : null) : app.amp(z);
+    }
+    const shown = `${app.$('field').selectedOptions[0].text} · ${n ? n + 'ω' : 'DC'}${n ? ' ' + (field === 'J' ? 'vector amplitude' : {amplitude: 'amplitude', phase: 'phase', real: 'real part', imaginary: 'imaginary part'}[representation]) : ''}`,
+      extras = periodic ? [] : [['temperature', 'T', 'K'], ['voltage', 'V', 'V']].filter(([key]) => key !== field)
+        .map(([key, symbol, u]) => ` · ${symbol} = ${TE.formatInputNumber(r[key][app.probe])} ${u}`);
+    app.$('probeReadout').hidden = false;
+    app.$('probeReadout').textContent = `Probe x = ${app.fmt(r.mesh.x[app.probe] * 1000)} mm, y = ${app.fmt(r.mesh.y[app.probe] * 1000)} mm · ${shown} = ${probeValue === null ? '— (below the phase threshold)' : TE.formatInputNumber(probeValue) + ' ' + unit}${extras.join('')}`;
     app.$('timeCharts').hidden = !periodic;
     if (periodic) {
       const thermal = TE.historyForPlot(r, r.temperature.map(T => T[app.probe])),

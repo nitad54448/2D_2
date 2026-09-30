@@ -25,7 +25,7 @@ The interface has a dark and a light theme. It follows the system setting until 
 4. **Solver**: shows the solution method; periodic runs set the frequency, time steps per period and maximum cycles here.
 5. **Run simulation**, then inspect **Results**.
 
-**Run simulation** and **Export model** also apply pending mesh changes. Remeshing resamples the material map, so inspect material regions afterwards. Invalid inputs are highlighted and listed above the tabs; Run and Export stay disabled until they are corrected.
+**Run simulation** and **Save project** also apply pending mesh changes. Remeshing resamples the material map, so inspect material regions afterwards. Invalid inputs are highlighted and listed above the tabs; Run and Save project stay disabled until they are corrected.
 
 ## Physical model
 
@@ -69,7 +69,7 @@ Electrical:
 - **Terminal voltage**: U is prescribed (V).
 - **Open circuit**: zero net terminal current.
 - The external leads are ideal conductors with zero Seebeck coefficient. U is therefore measured against an α = 0 reference, and an electrode on thermoelectric material exchanges the contact Peltier heat α·T·I with its lead: heat is absorbed where positive current enters a material with α > 0 and released where it leaves. On a side with a flux or convection condition this heat stays in the domain.
-- Electrode ranges are given in % along the edge, bottom→top on vertical edges and left→right on horizontal edges. Each electrode needs at least two boundary nodes, and the electrodes must not share a node.
+- Electrode ranges are given in % along the edge, bottom→top on vertical edges and left→right on horizontal edges. Each electrode needs at least two boundary nodes, and the electrodes must not share a node. Each electrode must also touch conducting material: validation rejects an electrode whose neighbouring cells are all at least 10¹⁴ times less conductive than the best conductor in the model (for example an electrode placed on alumina or air next to copper), because such a current path cannot be resolved in double precision. Resistive contacts, such as a semiconductor next to copper, are fine.
 
 Thermal, for each side (n is the outward normal):
 
@@ -163,7 +163,7 @@ Otherwise the run ends at the maximum cycle count (3 to 1000) as unconverged.
   - |J| is the vector norm √(|Jx|² + |Jy|²), not a harmonic of instantaneous |J|.
   - Phase maps grey out cells whose amplitude is at or below max(absolute threshold, 10⁻⁶ × field peak). The absolute thresholds are 10⁻⁷ K, 10⁻¹² V, and 10⁻⁹ SI units for J and q.
 - **Current arrows** show the real current phasor at 0°: direction and relative magnitude. Vectors below 10⁻⁸ of the strongest current harmonic (or 10⁻¹² A/m²) are hidden.
-- **Probe**: click the map to move it. Periodic runs plot its temperature and the terminal voltage over the saved cycle; DC runs show its coordinates, temperature and potential.
+- **Probe**: click the map to move it. The readout under the map gives the displayed field at the probe, in the selected harmonic and representation: the nodal value for temperature and voltage, the mean of the adjacent cells for cell fields. DC runs also list the probe temperature and potential; periodic runs plot its temperature and the terminal voltage over the saved cycle. Reports use the same probe.
 - **Spatial field · selected time**: the instantaneous field at any stored sample of the cycle.
 - **Terminal harmonics**: DC to 3ω peak phasors of the terminal voltage U = V(source) − V(sink), referenced to cos(ωt).
 
@@ -179,6 +179,8 @@ Otherwise the run ends at the maximum cycle count (3 to 1000) as unconverged.
 | Open circuit · Seebeck DC | α = 200 µV/K between 300 K and 350 K in open circuit: the Seebeck voltage. |
 | Thermoelectric module · Bi₂Te₃ n/p couple | A single thermoelectric couple as in a Peltier module (below). |
 | RC circuit · thermoelectric impedance spectrum | A thermoelectric element with the impedance of an RC circuit, swept from 0.003 to 30 Hz (below). |
+
+The **Example** selector names the loaded example until the model changes. Any edit, or opening a project, switches it to **Custom**; choosing an example, even the same one, loads it fresh.
 
 ### Thermoelectric module example
 
@@ -335,9 +337,14 @@ Material file format:
 
 ## Models, projects and exports
 
-**Export model / Import model.** The model as JSON, up to 2 MB, with `"version": 2`, scalar material values and 64, 128, 256, 512 or 1024 steps per period. Models with another version are rejected.
+A project is a ZIP of JSON files. It always holds the model: geometry, materials, boundary conditions and solver settings (`"version": 2`, scalar material values, 64 to 1024 steps per period). It may also hold results.
 
-**Save project / complete results ZIP** (Results → Export). The archive holds everything needed to reopen the results. **Import Project** (left of Import model) restores:
+**Save project** (toolbar) is available whenever the inputs are valid and nothing is running:
+
+- If the displayed results belong to the current inputs, it saves the complete project, the same file as **Save project / complete results ZIP** under Results → Export.
+- Otherwise (nothing computed yet, or inputs edited since the run), it saves the model and settings only, and the status line says so. Such a project is like an example: share it, open it and run it.
+
+**Import project** opens either kind. A project without results loads the model ready to run. A project with results restores:
 
 - the model and all retained results;
 - sweep points and the selected frequency;
@@ -349,6 +356,7 @@ Results can be inspected and exported without recalculation, and the model can b
 Project ZIP contents:
 
 - `project.json`: format metadata and the saved view.
+- Project without results: `model.json` and `README.txt`.
 - Single run:
   - `model.json`, `results.json` (full precision), `report.html`, `figures/*.svg`;
   - CSV files `nodes`, `cells`, `terminal`, `terminal_harmonics`, `histories/*` and `harmonics/*`;
@@ -369,7 +377,7 @@ Export rules:
 
 Import requirements:
 
-- Import accepts project ZIPs containing `project.json` (format `thermoelectric-lab-project`, version 2) with version-2 models, stored or Deflate-compressed. Deflate requires browser support for raw Deflate decompression.
+- Import accepts project ZIPs containing `project.json` (format `thermoelectric-lab-project`, version 2, kind `model`, `single` or `sweep`) with version-2 models, stored or Deflate-compressed. Deflate requires browser support for raw Deflate decompression.
 - Encrypted, split and ZIP64 archives, and results ZIPs without `project.json`, are rejected.
 - Limits: 2 GiB per archive, 256 MiB of JSON, and the retained-data budget.
 - Archived HTML and scripts are never executed.
@@ -394,4 +402,4 @@ Other exports:
 
 ## Tests
 
-With Node.js 24 or newer, run `node tests/regression.cjs` (29 checks, a few seconds). The suite covers solver smoke cases and the terminal sign convention, an ideal Peltier leg against its analytic solution, convergence of the module example beyond its optimum current, cycle extrapolation and the terminal-voltage tolerance, worker encoding and decoding, spatial phasors and colour-scale ranges, display-state handling, project round trips, model and project version checks, rejection of results ZIPs without `project.json`, malformed archive rejection, and agreement of the Solver-tab equations with the report guide. UI tests use DOM and canvas test doubles.
+With Node.js 24 or newer, run `node tests/regression.cjs` (33 checks, a few seconds). The suite covers solver smoke cases and the terminal sign convention, an ideal Peltier leg against its analytic solution, convergence of the module example beyond its optimum current, electrode placement checks, cycle extrapolation and the terminal-voltage tolerance, worker encoding and decoding, spatial phasors, colour-scale ranges and the probe readout, display-state handling, projects with and without results, model and project version checks, rejection of results ZIPs without `project.json`, malformed archive rejection, the material limit after runs, start-up of the full page scripts with the Example selector, and agreement of the Solver-tab equations with the report guide. UI tests use DOM and canvas test doubles.

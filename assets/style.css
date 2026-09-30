@@ -373,6 +373,11 @@ h3 {
   color:var(--muted);
   margin-top:12px;
 }
+.probe-readout {
+  font-size:12px;
+  margin-top:10px;
+  font-variant-numeric:tabular-nums;
+}
 .settings {
   border:0;
   margin:0;

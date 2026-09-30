@@ -66,11 +66,11 @@
     app.$('resultEmpty').hidden = false;
     app.$('vLabel').textContent = 'TERMINAL VOLTAGE';
     for (const id of ['vMetric', 'tMetric', 'cycleMetric', 'scaleMin', 'scaleMax', 'surfaceMin', 'surfaceMax']) app.$(id).textContent = '—';
-    for (const id of ['vPhase', 'diagnosticsNote', 'scaleUnit', 'surfaceUnit', 'probeChart', 'voltageChart', 'dcProbe']) app.$(id).textContent = '';
+    for (const id of ['vPhase', 'diagnosticsNote', 'scaleUnit', 'surfaceUnit', 'probeChart', 'voltageChart', 'probeReadout']) app.$(id).textContent = '';
     app.$('errorMetric').textContent = 'No valid result';
     app.$('fieldCaption').textContent = 'No valid result for the current model.';
     app.$('profileCaption').textContent = 'No valid result for the current model.';
-    app.$('dcProbe').hidden = true;
+    app.$('probeReadout').hidden = true;
     app.$('spectrum').innerHTML = '<tr><td colspan="6">No computed result.</td></tr>';
     for (const id of ['resultCanvas', 'profileCanvas']) {
       const canvas = app.$(id);
@@ -104,9 +104,10 @@
   };
   app.lock = function lock(value) {
     document.querySelectorAll('.settings').forEach(e => e.disabled = value);
-    for (const id of ['preset', 'import', 'importProject', 'addMaterial', 'materialFilesButton', 'run', 'save']) app.$(id).disabled = value;
+    for (const id of ['preset', 'importProject', 'addMaterial', 'materialFilesButton', 'presetMaterial', 'run', 'save']) app.$(id).disabled = value;
     app.$('cancel').hidden = !value;
     if (!value) {
+      app.updateMaterialCap(); // the material buttons stay disabled at the 12-material limit
       app.modes();
       app.validateUI();
     }

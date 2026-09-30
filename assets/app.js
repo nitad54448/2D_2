@@ -7,6 +7,7 @@
   };
   app.dirty = function dirty() {
     if (app.worker) return;
+    app.showPreset('custom'); // the model no longer matches the loaded example
     // Exports stay disabled until a new result is displayed, including while browsing sweep points.
     app.setExports(false);
     if (app.result) app.inputsChanged = true;
@@ -75,12 +76,16 @@
     if (!file) return;
     try {
       TE.assert(!app.worker && !app.importingProject, 'Wait until the current operation finishes.');
-      app.config = app.read();
-      TE.assert(app.config.materials.length < 12, 'Maximum 12 materials.');
+      TE.assert(app.read().materials.length < 12, 'Maximum 12 materials.');
       const res = await fetch('lib/' + file);
       if (!res.ok) throw new Error('Could not load preset.');
       const material = app.parseMaterialJson(await res.text());
-      app.config.materials.push(material);
+      // A run or import may have started, or inputs changed, while the file was loading.
+      TE.assert(!app.worker && !app.importingProject, 'Wait until the current operation finishes, then add the material again.');
+      const config = app.read();
+      TE.assert(config.materials.length < 12, 'Maximum 12 materials.');
+      config.materials.push(material);
+      app.config = config;
       app.materialsForm();
       app.drawGeometry();
       app.dirty();
@@ -129,7 +134,7 @@
       app.$('bodeNote').textContent = e.message;
     }
   };
-  app.$('save').onclick = app.exportModel;
+  app.$('save').onclick = app.saveProject;
   app.$('exportMenuButton').onclick = () => {
     const open = app.$('exportMenu').hidden;
     app.$('exportMenu').hidden = !open;
@@ -141,8 +146,6 @@
   app.$('exportCsv').onclick = app.exportSpectrum;
   app.$('importProject').onclick = () => app.$('projectFile').click();
   app.$('projectFile').onchange = app.importProject;
-  app.$('import').onclick = () => app.$('file').click();
-  app.$('file').onchange = app.importModel;
   app.$('preset').onchange = app.loadPreset;
   document.querySelectorAll('.settings').forEach(e => {
     e.addEventListener('input', event => {
@@ -204,6 +207,7 @@
   };
   initPresets();
 
+  app.presetShown = app.$('preset').value;
   app.fill();
   globalThis.TE_APP_READY = true;
 })(globalThis.TEApp);
